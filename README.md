@@ -1,0 +1,326 @@
+# Odum Trader Backtest
+
+Production-grade, containerized backtesting system built on NautilusTrader with external JSON configuration and GCS FUSE-ready architecture.
+
+## Overview
+
+This system provides a complete backtesting solution using NautilusTrader's high-level API (`BacktestNode`) for orchestrating multiple backtest runs. All runtime parameters are configured via external JSON files—nothing is hardcoded. The system is designed to be portable, stateless, and ready for cloud storage integration via GCS FUSE mounts.
+
+## Key Features
+
+- **Trade-Driven Backtesting**: One order per trade row using `submission_mode="per_trade_tick"`
+- **External JSON Configuration**: All parameters (instrument, venue, data paths, time windows) defined in JSON
+- **Automatic Data Conversion**: Raw Parquet files automatically converted to NautilusTrader catalog format
+- **Fast & Report Modes**: Minimal summaries or full detailed results with timeline, orders, and tick exports
+- **GCS FUSE Integration**: Mount Google Cloud Storage buckets directly (see `FUSE_SETUP.md`)
+- **Docker Compose Stack**: Complete containerized backend (Python) and frontend (React/Vite)
+- **Production UI**: React dashboard with comparison tables, backtest runner, and config editor
+
+## Quick Start
+
+### Prerequisites
+
+- Docker and Docker Compose
+- Raw Parquet data files in `data_downloads/raw_tick_data/by_date/day-YYYY-MM-DD/`
+
+### Start Services
+
+```bash
+# Start all services (backend API + frontend UI)
+docker-compose up -d
+
+# View backend logs
+docker-compose logs -f backend
+
+# Check service status
+docker-compose ps
+```
+
+### Access UI
+
+- **Frontend**: http://localhost:5173
+- **Backend API**: http://localhost:8000
+- **API Docs**: http://localhost:8000/docs
+
+### Run a Backtest
+
+#### Via Frontend UI (Recommended)
+
+1. Open http://localhost:5173/run
+2. Form is pre-filled with example values (Binance Futures BTCUSDT, May 23, 19:23-19:28 UTC)
+3. Click "Run Backtest" and watch status updates
+4. View results at http://localhost:5173/compare
+
+#### Via CLI
+
+```bash
+docker-compose exec backend python backend/run_backtest.py \
+  --instrument BTCUSDT \
+  --dataset day-2023-05-23 \
+  --config external/data_downloads/configs/binance_futures_btcusdt_l2_trades_config.json \
+  --start 2023-05-23T19:23:00Z \
+  --end 2023-05-23T19:28:00Z \
+  --fast
+```
+
+#### Via API
+
+```bash
+curl -X POST http://localhost:8000/api/backtest/run \
+  -H "Content-Type: application/json" \
+  -d '{
+    "instrument": "BTCUSDT",
+    "dataset": "day-2023-05-23",
+    "config": "binance_futures_btcusdt_l2_trades_config.json",
+    "start": "2023-05-23T19:23:00Z",
+    "end": "2023-05-23T19:28:00Z",
+    "fast": true,
+    "snapshot_mode": "both"
+  }'
+```
+
+## Project Structure
+
+```
+.
+├── README.md                    # This file
+├── ARCHITECTURE.md              # System architecture documentation
+├── BACKTEST_SPEC.md             # Backtest specification and CLI reference
+├── FRONTEND_UI_SPEC.md          # Frontend UI specification
+├── docker-compose.yml           # Docker Compose configuration
+│
+├── backend/                     # Python backend
+│   ├── run_backtest.py         # CLI entrypoint
+│   ├── backtest_engine.py      # BacktestNode orchestration
+│   ├── config_loader.py        # JSON config loader
+│   ├── data_converter.py       # Parquet → Catalog converter
+│   ├── strategy.py             # Trade-driven strategy
+│   ├── strategy_evaluator.py   # Performance analysis
+│   ├── results.py              # Result serialization
+│   ├── api/                    # REST API server
+│   │   └── server.py           # FastAPI endpoints
+│   ├── data/parquet/           # Converted catalog data (auto-generated)
+│   └── backtest_results/       # Backtest outputs
+│       ├── fast/               # Fast mode JSON summaries
+│       └── report/             # Report mode directories
+│
+├── frontend/                    # React frontend
+│   ├── src/
+│   │   ├── pages/              # Page components
+│   │   │   ├── BacktestRunnerPage.tsx
+│   │   │   ├── BacktestComparisonPage.tsx
+│   │   │   └── DefinitionsPage.tsx
+│   │   ├── components/        # Reusable components
+│   │   └── services/          # API clients
+│   └── public/tickdata/       # Tick JSON exports (full mode)
+│
+├── external/data_downloads/
+│   └── configs/                # JSON configuration files
+│       ├── binance_futures_btcusdt_l2_trades_config.json
+│       ├── binance_futures_ethusdt_l2_trades_config.json
+│       └── ...                 # Other venue/instrument configs
+│
+├── data_downloads/             # Raw data (FUSE mount point)
+│   └── raw_tick_data/
+│       └── by_date/
+│           └── day-YYYY-MM-DD/
+│               ├── data_type-trades/
+│               └── data_type-book_snapshot_5/
+│
+└── docs/                       # Additional documentation
+    ├── TESTING_GUIDE.md
+    ├── QUICK_TEST.md
+    └── ...
+```
+
+## Configuration
+
+All runtime parameters are specified in external JSON files located in `external/data_downloads/configs/`. See `BACKTEST_SPEC.md` for complete JSON schema.
+
+### Key Configuration Sections
+
+- **instrument**: ID, price/size precision
+- **venue**: Name, OMS type, account type, base currency, starting balance, maker/taker fees
+- **data_catalog**: Paths to raw Parquet files (supports wildcards for auto-discovery)
+- **time_window**: Start/end UTC timestamps
+- **strategy**: Strategy name, submission mode
+- **environment**: Environment variables (paths, Parquet flags)
+
+### Example Config
+
+```json
+{
+  "instrument": {
+    "id": "BTC-USDT.BINANCE-FUTURES",
+    "price_precision": 2,
+    "size_precision": 3
+  },
+  "venue": {
+    "name": "BINANCE-FUTURES",
+    "oms_type": "NETTING",
+    "account_type": "MARGIN",
+    "base_currency": "USDT",
+    "starting_balance": 1000000,
+    "maker_fee": 0.0002,
+    "taker_fee": 0.0004
+  },
+  "data_catalog": {
+    "trades_path": "raw_tick_data/by_date/day-*/data_type-trades/BINANCE-FUTURES:PERPETUAL:BTC-USDT.parquet",
+    "book_snapshot_5_path": "raw_tick_data/by_date/day-*/data_type-book_snapshot_5/BINANCE-FUTURES:PERPETUAL:BTC-USDT.parquet",
+    "auto_discover": true
+  },
+  "time_window": {
+    "start": "2023-05-23T19:23:00Z",
+    "end": "2023-05-23T19:28:00Z"
+  }
+}
+```
+
+## Backtest Modes
+
+### Fast Mode (`--fast`)
+
+- Minimal JSON summary
+- Quick performance metrics (PnL, orders, fills, trades)
+- No tick export
+- Output: `backend/backtest_results/fast/<run_id>.json`
+
+### Report Mode (`--report`)
+
+- Full timeline of events
+- Complete order history
+- Tick data export (optional with `--export_ticks`)
+- Detailed metadata
+- Output: `backend/backtest_results/report/<run_id>/` directory
+
+## Run ID Format
+
+Run IDs are short and readable:
+```
+BNF_BTC_20230523_192312_018dd7_c54988
+```
+
+Format: `VENUE_INSTRUMENT_DATE_TIME_CONFIGHASH_UUID`
+- Venue: Shortened (BINANCE-FUTURES → BNF)
+- Instrument: Shortened (BTCUSDT → BTC)
+- Date: YYYYMMDD
+- Time: HHMMSS + 2-digit microseconds
+- Config hash: 6 characters
+- UUID: 6 characters (ensures uniqueness)
+
+## Data Flow
+
+1. **Raw Data**: Parquet files in `data_downloads/raw_tick_data/by_date/day-YYYY-MM-DD/`
+2. **Automatic Conversion**: On first run, raw files converted to NautilusTrader catalog format
+3. **Catalog Storage**: Converted data stored in `backend/data/parquet/data/trade_tick/<instrument_id>/`
+4. **Backtest Query**: NautilusTrader queries catalog for time window
+5. **Results**: Saved to `backend/backtest_results/` (fast or report mode)
+
+## API Endpoints
+
+- `GET /api/health` - Health check
+- `POST /api/backtest/run` - Execute backtest
+- `GET /api/backtest/results` - List all results
+- `GET /api/backtest/results/{run_id}` - Get specific result
+- `GET /api/datasets` - Scan available datasets
+- `GET /api/configs` - List config files
+- `GET /api/configs/{config_name}` - Get config content
+- `POST /api/configs` - Save config file
+
+## Environment Variables
+
+- `UNIFIED_CLOUD_LOCAL_PATH` - Base path for data (default: `/app/data_downloads`)
+- `UNIFIED_CLOUD_SERVICES_USE_PARQUET` - Use Parquet format (default: `true`)
+- `UNIFIED_CLOUD_SERVICES_USE_DIRECT_GCS` - Direct GCS access (default: `false`)
+- `DATA_CATALOG_PATH` - Parquet catalog root (default: `/app/backend/data/parquet`)
+
+## Status Updates
+
+The system provides detailed status updates during backtest execution:
+
+- Data validation and file discovery
+- Catalog registration progress (file sizes, conversion counts)
+- Backtest execution progress
+- Performance evaluation steps
+
+Watch logs: `docker-compose logs -f backend`
+
+## Documentation
+
+- **ARCHITECTURE.md**: System architecture, data flow, Docker setup
+- **BACKTEST_SPEC.md**: Complete CLI reference, JSON schema, strategy logic
+- **FRONTEND_UI_SPEC.md**: Frontend component architecture, UI patterns
+- **FUSE_SETUP.md**: GCS FUSE integration guide
+- **SYSTEM_REVIEW_AND_AGENTS.md**: System review and 5 agent definitions
+- **AGENTS_QUICK_REFERENCE.md**: Quick reference for testing agents
+- **docs/REFERENCE.md**: Technical reference (data conversion, PnL calculation, testing, troubleshooting)
+
+## Development
+
+### Backend
+
+```bash
+# Install dependencies
+cd backend
+pip install -r requirements.txt
+
+# Run CLI
+python backend/run_backtest.py --help
+
+# Run API server
+python -m uvicorn backend.api.server:app --reload
+```
+
+### Frontend
+
+```bash
+# Install dependencies
+cd frontend
+npm install
+
+# Development server
+npm run dev
+
+# Production build
+npm run build
+```
+
+## Troubleshooting
+
+### Services Not Starting
+
+```bash
+# Rebuild containers
+docker-compose up -d --build
+
+# Check logs
+docker-compose logs backend
+docker-compose logs frontend
+```
+
+### No Data Found
+
+1. Verify data files exist: `ls data_downloads/raw_tick_data/by_date/`
+2. Check config paths match actual file locations
+3. Verify time window matches data availability
+4. Check backend logs for validation errors
+
+### Catalog Issues
+
+```bash
+# Clear catalog and reconvert
+rm -rf backend/data/parquet/*
+# Next backtest run will reconvert data
+```
+
+## Best Practices
+
+- Use fast mode for quick validation
+- Use report mode for detailed analysis
+- Keep config files version-controlled
+- Monitor disk space (catalog data can grow large)
+- Use wildcard paths in configs for auto-discovery across date folders
+
+## License
+
+MIT

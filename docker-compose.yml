@@ -1,0 +1,112 @@
+# Docker Compose file - version attribute removed (obsolete in newer versions)
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: nautilus-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      # Conditional: only mount local data_downloads if not using FUSE
+      # If USE_GCS_FUSE=true, gcsfuse will mount to /app/data_downloads
+      - ./data_downloads:/app/data_downloads:ro
+      - ./backend/data/parquet:/app/backend/data/parquet
+      - ./backend/backtest_results:/app/backend/backtest_results
+      - ./external/data_downloads/configs:/app/external/data_downloads/configs:ro
+      - ./frontend/public/tickdata:/app/frontend/public/tickdata
+      # Optional: mount service account key file for GCS authentication
+      # Uncomment and set path if using file-based authentication:
+      # - ./gcs-key.json:/app/gcs-key.json:ro
+    environment:
+      - UNIFIED_CLOUD_LOCAL_PATH=/app/data_downloads
+      - UNIFIED_CLOUD_SERVICES_USE_PARQUET=true
+      - UNIFIED_CLOUD_SERVICES_USE_DIRECT_GCS=false
+      - DATA_CATALOG_PATH=/app/backend/data/parquet
+      # GCS FUSE configuration (optional)
+      - USE_GCS_FUSE=${USE_GCS_FUSE:-false}
+      - GCS_FUSE_BUCKET=${GCS_FUSE_BUCKET:-}
+      - GCS_SERVICE_ACCOUNT_KEY=${GCS_SERVICE_ACCOUNT_KEY:-}
+    # Use start.sh which handles FUSE mounting
+    command: bash /app/backend/scripts/start.sh
+    # Note: Privileged mode is required for FUSE mounting
+    # Set privileged: true in docker-compose.override.yml or manually when USE_GCS_FUSE=true
+    # privileged: true  # Uncomment this line when using GCS FUSE
+    networks:
+      - backtest-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    # Optional: Add restart policy for production
+    # restart: unless-stopped
+    # Optional: Add resource limits for production
+    # deploy:
+    #   resources:
+    #     limits:
+    #       memory: 2G
+    #       cpus: '1.0'
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    container_name: nautilus-frontend
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - ./backend/backtest_results:/app/backend/backtest_results:ro
+      - ./frontend/public/tickdata:/app/public/tickdata
+      - ./external/data_downloads/configs:/app/external/data_downloads/configs:ro
+    environment:
+      - VITE_API_URL=http://localhost:8000  # Use localhost for browser access
+    networks:
+      - backtest-network
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:5173"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    # Optional: Add restart policy for production
+    # restart: unless-stopped
+    # Optional: Add resource limits for production
+    # deploy:
+    #   resources:
+    #     limits:
+    #       memory: 1G
+    #       cpus: '0.5'
+
+  redis:
+    image: redis:7-alpine
+    container_name: nautilus-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - backtest-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    profiles:
+      - batch-processing
+    # Optional: Add restart policy for production
+    # restart: unless-stopped
+
+volumes:
+  redis-data:
+
+networks:
+  backtest-network:
+    driver: bridge
+

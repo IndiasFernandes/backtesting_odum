@@ -1,0 +1,48 @@
+{
+  "instrument": {
+    "id": "BYBIT:PERPETUAL:BTC-USDT",
+    "price_precision": 2,
+    "size_precision": 3
+  },
+  "venue": {
+    "name": "BYBIT",
+    "oms_type": "FUTURES",
+    "account_type": "MARGIN",
+    "base_currency": "USDT",
+    "starting_balance": 1000000,
+    "book_type": "L2_MBP"
+  },
+  "data_catalog": {
+    "parquet_root": "backend/data/parquet/",
+    "trades_path": "data_downloads/raw_tick_data/by_date/day-2023-05-23/data_type-trades/BYBIT:PERPETUAL:BTC-USDT.parquet",
+    "book_snapshot_5_path": "data_downloads/raw_tick_data/by_date/day-2023-05-23/data_type-book_snapshot_5/BYBIT:PERPETUAL:BTC-USDT.parquet"
+  },
+  "time_window": {
+    "start": "2023-05-23T02:00:00Z",
+    "end": "2023-05-23T02:30:00Z"
+  },
+  "strategy": {
+    "name": "TempBacktestStrategy",
+    "submission_mode": "per_trade_tick",
+    "orders": [
+      {
+        "side": "buy",
+        "price": 50000.0,
+        "amount": 0.1
+      }
+    ]
+  },
+  "risk": {
+    "throttling_per_sec": 1000000
+  },
+  "environment": {
+    "UNIFIED_CLOUD_LOCAL_PATH": "/app/data_downloads",
+    "UNIFIED_CLOUD_SERVICES_USE_PARQUET": true,
+    "UNIFIED_CLOUD_SERVICES_USE_DIRECT_GCS": false,
+    "DATA_CATALOG_PATH": "backend/data/parquet/"
+  },
+  "fx_stub": {
+    "USDT_USD": 1.0
+  }
+}
+

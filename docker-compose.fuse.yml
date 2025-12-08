@@ -1,0 +1,12 @@
+# Docker Compose override for GCS FUSE
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.fuse.yml up -d
+
+services:
+  backend:
+    # Enable privileged mode for FUSE mounting (required for gcsfuse)
+    privileged: true
+    volumes:
+      # Remove local data_downloads volume when using FUSE (it will be mounted by gcsfuse)
+      # Comment out the local volume mount:
+      # - ./data_downloads:/app/data_downloads:ro
+
