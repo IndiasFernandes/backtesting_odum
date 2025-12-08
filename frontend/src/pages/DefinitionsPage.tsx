@@ -1,10 +1,12 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { backtestApi } from '../services/api'
+import { useToastContext } from '../components/Layout'
 
 export default function DefinitionsPage() {
   const [selectedConfig, setSelectedConfig] = useState<string>('')
   const [configContent, setConfigContent] = useState<string>('')
+  const toast = useToastContext()
 
   const { data: configs, isLoading, error } = useQuery({
     queryKey: ['configs'],
@@ -19,6 +21,7 @@ export default function DefinitionsPage() {
     } catch (error) {
       console.error('Error loading config:', error)
       setConfigContent('{}')
+      toast.error('Failed to load config')
     }
   }
 
@@ -27,9 +30,13 @@ export default function DefinitionsPage() {
     try {
       const parsed = JSON.parse(configContent)
       await backtestApi.saveConfig(selectedConfig, parsed)
-      alert('Config saved successfully')
-    } catch (error) {
-      alert(`Error saving config: ${error}`)
+      toast.success('Config saved successfully')
+    } catch (error: any) {
+      if (error instanceof SyntaxError) {
+        toast.error('Invalid JSON format')
+      } else {
+        toast.error(`Error saving config: ${error.message || error}`)
+      }
     }
   }
 
