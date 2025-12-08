@@ -1514,17 +1514,21 @@ class BacktestEngine:
                 
                 # First pass: collect all orders and add to timeline
                 timeline_count = 0
+                # Track rejection reasons from strategy events (will be populated later)
+                rejection_reasons_by_order_id = {}
+                
                 for order in all_orders:
                     try:
+                        order_id = str(order.client_order_id)
                         order_dict = {
-                            "id": str(order.client_order_id),
+                            "id": order_id,
                             "side": order.side.name.lower() if hasattr(order.side, 'name') else str(order.side),
                             "price": float(order.price) if hasattr(order, 'price') and order.price else 0.0,
                             "amount": float(order.quantity) if hasattr(order, 'quantity') and order.quantity else 0.0,
                             "status": order.status.name.lower() if hasattr(order.status, 'name') else str(order.status),
                         }
                         orders_list_for_report.append(order_dict)
-                        orders_by_id[str(order.client_order_id)] = order_dict
+                        orders_by_id[order_id] = order_dict
                         
                         # Add order event to timeline (try multiple timestamp attributes)
                         order_ts_ns = None
@@ -1551,69 +1555,192 @@ class BacktestEngine:
                         print(f"Warning: Could not serialize order {order.client_order_id}: {e}")
                         continue
             
-                # OPTIMIZED: Add fill events only for filled orders (simpler and faster)
-                # Following NautilusTrader best practices: use order status to identify fills
-                # This avoids expensive report generation for better performance
+                # ENHANCED: Use strategy-captured fill events for accurate fill data
+                # First try to get fills from strategy (most accurate - has actual fill prices)
+                fill_count = 0
                 try:
-                    fill_count = 0
-                    # Add fill events based on order status (much faster than generating reports)
-                    for order in all_orders:
-                        try:
-                            order_id = str(order.client_order_id)
-                            if order_id not in orders_by_id:
+                    # Try to get strategy instance to access captured fill events
+                    strategy_fills = []
+                    strategy_rejections = []
+                    
+                    # Access strategy from engine
+                    if hasattr(engine, 'trader') and engine.trader:
+                        # Try multiple methods to access strategies
+                        strategies = []
+                        if hasattr(engine.trader, 'strategies'):
+                            try:
+                                strategies = engine.trader.strategies()
+                            except Exception:
+                                pass
+                        elif hasattr(engine.trader, 'cache') and hasattr(engine.trader.cache, 'strategies'):
+                            try:
+                                strategies = engine.trader.cache.strategies()
+                            except Exception:
+                                pass
+                        
+                        # Also try accessing via engine cache
+                        if not strategies and hasattr(engine, 'cache'):
+                            try:
+                                if hasattr(engine.cache, 'strategies'):
+                                    strategies = engine.cache.strategies()
+                            except Exception:
+                                pass
+                        
+                        # Extract fill and rejection events from strategies
+                        for strategy in strategies:
+                            try:
+                                if hasattr(strategy, 'get_fill_events'):
+                                    fills = strategy.get_fill_events()
+                                    if fills:
+                                        strategy_fills.extend(fills)
+                                if hasattr(strategy, 'get_rejection_events'):
+                                    rejections = strategy.get_rejection_events()
+                                    if rejections:
+                                        strategy_rejections.extend(rejections)
+                            except Exception as strategy_access_error:
+                                print(f"Warning: Could not access strategy events: {strategy_access_error}")
                                 continue
+                    
+                    # Add fill events from strategy (has actual fill prices and timestamps)
+                    fill_events_by_order_id = {}
+                    for fill_event in strategy_fills:
+                        try:
+                            order_id = fill_event.get('order_id')
+                            fill_ts_ns = fill_event.get('ts_event') or fill_event.get('ts_init')
                             
-                            # Check if order was filled
-                            is_filled = False
-                            filled_qty = 0.0
-                            fill_price = orders_by_id[order_id]['price']
-                            
-                            if hasattr(order, 'filled_qty') and order.filled_qty:
-                                filled_qty = float(order.filled_qty.as_decimal())
-                                if filled_qty > 0:
-                                    is_filled = True
-                            
-                            # Also check status
-                            if hasattr(order, 'status'):
-                                status_str = order.status.name.lower() if hasattr(order.status, 'name') else str(order.status)
-                                if 'filled' in status_str or 'partially_filled' in status_str:
-                                    is_filled = True
-                            
-                            if is_filled:
-                                # Use order timestamp for fill (or try to get fill timestamp)
-                                fill_ts_ns = None
-                                if hasattr(order, 'ts_event') and order.ts_event:
-                                    fill_ts_ns = order.ts_event
-                                elif hasattr(order, 'ts_last') and order.ts_last:
-                                    fill_ts_ns = order.ts_last
-                                elif hasattr(order, 'ts_init') and order.ts_init:
-                                    fill_ts_ns = order.ts_init
+                            if order_id and fill_ts_ns:
+                                fill_ts = ns_to_datetime(fill_ts_ns)
+                                fill_data = {
+                                    "order_id": order_id,
+                                    "price": fill_event.get('price', 0.0),
+                                    "quantity": fill_event.get('quantity', 0.0),
+                                    "side": fill_event.get('side', 'unknown'),
+                                }
                                 
-                                if fill_ts_ns:
-                                    try:
-                                        fill_ts = ns_to_datetime(fill_ts_ns)
-                                        fill_data = {
-                                            "order_id": order_id,
-                                            "price": fill_price,
-                                            "quantity": filled_qty if filled_qty > 0 else orders_by_id[order_id]['amount'],
-                                        }
-                                        
-                                        timeline.append({
-                                            "ts": fill_ts.isoformat().replace('+00:00', 'Z'),
-                                            "event": "Fill",
-                                            "data": fill_data
-                                        })
-                                        fill_count += 1
-                                    except Exception as fill_ts_error:
-                                        pass
-                        except Exception:
+                                # Store by order_id to avoid duplicates
+                                fill_events_by_order_id[order_id] = {
+                                    "ts": fill_ts.isoformat().replace('+00:00', 'Z'),
+                                    "event": "Fill",
+                                    "data": fill_data
+                                }
+                        except Exception as fill_parse_error:
+                            print(f"Warning: Error parsing fill event: {fill_parse_error}")
                             continue
                     
-                    print(f"Debug: Added {fill_count} fill events to timeline")
-                except Exception as fills_error:
-                    print(f"Warning: Could not build fill timeline: {fills_error}")
+                    # Add fill events to timeline
+                    for fill_event_entry in fill_events_by_order_id.values():
+                        timeline.append(fill_event_entry)
+                    fill_count = len(fill_events_by_order_id)
+                    
+                    # Add rejection events to timeline
+                    rejection_count = 0
+                    for rejection_event in strategy_rejections:
+                        try:
+                            order_id = rejection_event.get('order_id')
+                            rejection_ts_ns = rejection_event.get('ts_event') or rejection_event.get('ts_init')
+                            
+                            if order_id and rejection_ts_ns:
+                                rejection_ts = ns_to_datetime(rejection_ts_ns)
+                                
+                                # Find corresponding order to get full details
+                                order_details = orders_by_id.get(order_id, {})
+                                
+                                rejection_data = {
+                                    "order_id": order_id,
+                                    "reason": rejection_event.get('reason', 'Unknown'),
+                                    "side": order_details.get('side', 'unknown'),
+                                    "price": order_details.get('price', 0.0),
+                                    "amount": order_details.get('amount', 0.0),
+                                }
+                                
+                                timeline.append({
+                                    "ts": rejection_ts.isoformat().replace('+00:00', 'Z'),
+                                    "event": "OrderRejected",
+                                    "data": rejection_data
+                                })
+                                rejection_count += 1
+                                
+                                # Store rejection reason for later use
+                                rejection_reasons_by_order_id[order_id] = rejection_event.get('reason', 'Unknown')
+                                
+                                # Update order status in orders_list_for_report
+                                for order_dict in orders_list_for_report:
+                                    if order_dict.get('id') == order_id:
+                                        if order_dict.get('status') not in ['denied', 'rejected']:
+                                            order_dict['status'] = 'rejected'
+                                        order_dict['rejection_reason'] = rejection_reasons_by_order_id[order_id]
+                                        break
+                        except Exception as rejection_parse_error:
+                            print(f"Warning: Error parsing rejection event: {rejection_parse_error}")
+                            continue
+                    
+                    print(f"Debug: Added {fill_count} fill events and {rejection_count} rejection events from strategy")
+                    
+                except Exception as strategy_events_error:
+                    print(f"Warning: Could not get fill/rejection events from strategy: {strategy_events_error}")
                     import traceback
                     traceback.print_exc()
+                    
+                    # Fallback: Add fill events based on order status (original method)
+                    try:
+                        fill_count = 0
+                        for order in all_orders:
+                            try:
+                                order_id = str(order.client_order_id)
+                                if order_id not in orders_by_id:
+                                    continue
+                                
+                                # Check if order was filled
+                                is_filled = False
+                                filled_qty = 0.0
+                                fill_price = orders_by_id[order_id]['price']
+                                
+                                if hasattr(order, 'filled_qty') and order.filled_qty:
+                                    filled_qty = float(order.filled_qty.as_decimal())
+                                    if filled_qty > 0:
+                                        is_filled = True
+                                
+                                # Also check status
+                                if hasattr(order, 'status'):
+                                    status_str = order.status.name.lower() if hasattr(order.status, 'name') else str(order.status)
+                                    if 'filled' in status_str or 'partially_filled' in status_str:
+                                        is_filled = True
+                                
+                                if is_filled:
+                                    # Use order timestamp for fill (or try to get fill timestamp)
+                                    fill_ts_ns = None
+                                    if hasattr(order, 'ts_event') and order.ts_event:
+                                        fill_ts_ns = order.ts_event
+                                    elif hasattr(order, 'ts_last') and order.ts_last:
+                                        fill_ts_ns = order.ts_last
+                                    elif hasattr(order, 'ts_init') and order.ts_init:
+                                        fill_ts_ns = order.ts_init
+                                    
+                                    if fill_ts_ns:
+                                        try:
+                                            fill_ts = ns_to_datetime(fill_ts_ns)
+                                            fill_data = {
+                                                "order_id": order_id,
+                                                "price": fill_price,
+                                                "quantity": filled_qty if filled_qty > 0 else orders_by_id[order_id]['amount'],
+                                            }
+                                            
+                                            timeline.append({
+                                                "ts": fill_ts.isoformat().replace('+00:00', 'Z'),
+                                                "event": "Fill",
+                                                "data": fill_data
+                                            })
+                                            fill_count += 1
+                                        except Exception as fill_ts_error:
+                                            pass
+                            except Exception:
+                                continue
+                        
+                        print(f"Debug: Added {fill_count} fill events to timeline (fallback method)")
+                    except Exception as fills_error:
+                        print(f"Warning: Could not build fill timeline: {fills_error}")
+                        import traceback
+                        traceback.print_exc()
                 
                 # Sort timeline by timestamp (required for chronological order)
                 if timeline:
