@@ -20,8 +20,9 @@ This system provides a complete backtesting solution using NautilusTrader's high
 
 ### Prerequisites
 
-- Docker and Docker Compose
+- Docker and Docker Compose (Docker 20.10+, Docker Compose 2.0+)
 - Raw Parquet data files in `data_downloads/raw_tick_data/by_date/day-YYYY-MM-DD/`
+- At least 5GB free disk space, 4GB RAM recommended
 
 ### Start Services
 
@@ -34,6 +35,9 @@ docker-compose logs -f backend
 
 # Check service status
 docker-compose ps
+
+# Run infrastructure tests
+./backend/scripts/test_docker_infrastructure.sh
 ```
 
 ### Access UI
@@ -41,6 +45,44 @@ docker-compose ps
 - **Frontend**: http://localhost:5173
 - **Backend API**: http://localhost:8000
 - **API Docs**: http://localhost:8000/docs
+
+### Docker Services
+
+- **Backend** (port 8000): Python FastAPI server with NautilusTrader
+- **Frontend** (port 5173): React/Vite development server
+- **Redis** (port 6379): Optional, enabled with `--profile batch-processing`
+
+### Docker Volumes
+
+- `data_downloads/` → `/app/data_downloads` (read-only, raw data)
+- `backend/data/parquet/` → `/app/backend/data/parquet` (read-write, catalog)
+- `backend/backtest_results/` → `/app/backend/backtest_results` (read-write, results)
+- `frontend/public/tickdata/` → `/app/frontend/public/tickdata` (read-write, tick exports)
+- `external/data_downloads/configs/` → `/app/external/data_downloads/configs` (read-only, configs)
+
+### Common Docker Commands
+
+```bash
+# Stop services
+docker-compose stop
+
+# Restart services
+docker-compose restart
+
+# Rebuild after code changes
+docker-compose up -d --build
+
+# Stop and remove containers
+docker-compose down
+
+# Execute commands in containers
+docker-compose exec backend bash
+docker-compose exec frontend sh
+
+# View health status
+docker inspect --format='{{.State.Health.Status}}' nautilus-backend
+docker inspect --format='{{.State.Health.Status}}' nautilus-frontend
+```
 
 ### Run a Backtest
 
@@ -53,18 +95,41 @@ docker-compose ps
 
 #### Via CLI
 
+**Fast Mode (minimal summary):**
 ```bash
 docker-compose exec backend python backend/run_backtest.py \
   --instrument BTCUSDT \
   --dataset day-2023-05-23 \
   --config external/data_downloads/configs/binance_futures_btcusdt_l2_trades_config.json \
-  --start 2023-05-23T19:23:00Z \
-  --end 2023-05-23T19:28:00Z \
-  --fast
+  --start 2023-05-23T02:00:00Z \
+  --end 2023-05-23T02:01:00Z \
+  --fast \
+  --snapshot_mode trades
 ```
+
+**Report Mode (full details with timeline):**
+```bash
+docker-compose exec backend python backend/run_backtest.py \
+  --instrument BTCUSDT \
+  --dataset day-2023-05-23 \
+  --config external/data_downloads/configs/binance_futures_btcusdt_l2_trades_config.json \
+  --start 2023-05-23T02:00:00Z \
+  --end 2023-05-23T02:01:00Z \
+  --report \
+  --snapshot_mode trades \
+  --export_ticks
+```
+
+**Available CLI Flags:**
+- `--fast`: Fast mode (minimal JSON summary)
+- `--report`: Report mode (full details: timeline, orders, metadata)
+- `--export_ticks`: Export tick data (requires `--report`)
+- `--snapshot_mode`: `trades`, `book`, or `both` (default: `both`)
+- `--no_close_positions`: Don't close positions at end (default: positions are closed)
 
 #### Via API
 
+**Fast Mode:**
 ```bash
 curl -X POST http://localhost:8000/api/backtest/run \
   -H "Content-Type: application/json" \
@@ -72,12 +137,34 @@ curl -X POST http://localhost:8000/api/backtest/run \
     "instrument": "BTCUSDT",
     "dataset": "day-2023-05-23",
     "config": "binance_futures_btcusdt_l2_trades_config.json",
-    "start": "2023-05-23T19:23:00Z",
-    "end": "2023-05-23T19:28:00Z",
+    "start": "2023-05-23T02:00:00Z",
+    "end": "2023-05-23T02:01:00Z",
     "fast": true,
-    "snapshot_mode": "both"
+    "snapshot_mode": "trades"
   }'
 ```
+
+**Report Mode:**
+```bash
+curl -X POST http://localhost:8000/api/backtest/run \
+  -H "Content-Type: application/json" \
+  -d '{
+    "instrument": "BTCUSDT",
+    "dataset": "day-2023-05-23",
+    "config": "binance_futures_btcusdt_l2_trades_config.json",
+    "start": "2023-05-23T02:00:00Z",
+    "end": "2023-05-23T02:01:00Z",
+    "report": true,
+    "snapshot_mode": "trades",
+    "export_ticks": true
+  }'
+```
+
+**API Parameters:**
+- `fast`: boolean - Fast mode (minimal summary)
+- `report`: boolean - Report mode (full details)
+- `export_ticks`: boolean - Export tick data (requires `report: true`)
+- `snapshot_mode`: string - `"trades"`, `"book"`, or `"both"` (default: `"both"`)
 
 ## Project Structure
 
