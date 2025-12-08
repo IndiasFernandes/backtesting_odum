@@ -731,10 +731,26 @@ async def get_fills(run_id: str) -> List[Dict[str, Any]]:
             if isinstance(timeline_data, list):
                 fills = []
                 for event in timeline_data:
-                    if event.get('event') == 'Fill':
-                        fill_data = dict(event.get('data', {}))
-                        ts = event.get('ts', '')
+                    event_type = event.get('event')
+                    event_data = event.get('data', {})
+                    ts = event.get('ts', '')
+                    
+                    # Extract fills from both 'Fill' events and 'Order' events with status='filled'
+                    if event_type == 'Fill':
+                        fill_data = dict(event_data)
                         fill_data['timestamp'] = ts
+                        fills.append(fill_data)
+                    elif event_type == 'Order' and event_data.get('status') == 'filled':
+                        # Extract fill information from filled orders
+                        fill_data = {
+                            'id': event_data.get('id'),
+                            'order_id': event_data.get('id'),
+                            'side': event_data.get('side'),
+                            'price': event_data.get('price'),
+                            'quantity': event_data.get('amount'),  # amount in orders = quantity in fills
+                            'amount': event_data.get('amount'),
+                            'timestamp': ts,
+                        }
                         fills.append(fill_data)
                 # Sort by timestamp
                 fills.sort(key=lambda x: x.get('timestamp', ''))

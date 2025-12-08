@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { BacktestResult, backtestApi } from '../services/api'
 import { format, parseISO } from 'date-fns'
 import { BacktestCharts } from './BacktestCharts'
+import { PnLChart } from './PnLChart'
+import { TickPriceChart } from './TickPriceChart'
 
 interface ResultDetailModalProps {
   result: BacktestResult | null
@@ -9,15 +11,17 @@ interface ResultDetailModalProps {
 }
 
 export function ResultDetailModal({ result, onClose }: ResultDetailModalProps) {
-  const [fills, setFills] = useState<Array<{ order_id: string; price: number; quantity: number }>>([])
+  const [fills, setFills] = useState<Array<{ order_id?: string; id?: string; price: number; quantity?: number; amount?: number; side?: string; timestamp?: string }>>([])
   const [rejectedOrders, setRejectedOrders] = useState<{
     rejected_orders: Array<{ id: string; side: string; price: number; amount: number; status: string }>
     analysis: any
   } | null>(null)
   const [timeline, setTimeline] = useState<Array<{ ts: string; event: string; data: any }>>([])
+  const [tickData, setTickData] = useState<Array<any>>([])
   const [loadingFills, setLoadingFills] = useState(false)
   const [loadingRejected, setLoadingRejected] = useState(false)
   const [loadingTimeline, setLoadingTimeline] = useState(false)
+  const [loadingTicks, setLoadingTicks] = useState(false)
 
   useEffect(() => {
     if (result && result.mode === 'report') {
@@ -45,6 +49,20 @@ export function ResultDetailModal({ result, onClose }: ResultDetailModalProps) {
         })
         .catch(console.error)
         .finally(() => setLoadingTimeline(false))
+      
+      // Load tick data if available
+      setLoadingTicks(true)
+      backtestApi.getTickData(result.run_id)
+        .then((ticks) => {
+          if (Array.isArray(ticks)) {
+            setTickData(ticks)
+          }
+        })
+        .catch((err) => {
+          console.error('Failed to load tick data:', err)
+          // Tick data might not be available for all backtests
+        })
+        .finally(() => setLoadingTicks(false))
     }
   }, [result])
 
@@ -85,7 +103,7 @@ export function ResultDetailModal({ result, onClose }: ResultDetailModalProps) {
             <div className="grid grid-cols-2 gap-4 text-sm">
               <div>
                 <span className="text-gray-400">Run ID:</span>
-                <span className="text-white ml-2 font-mono">{result.run_id}</span>
+                <span className="text-white ml-2 font-mono text-xs">{result.run_id}</span>
               </div>
               <div>
                 <span className="text-gray-400">Instrument:</span>
@@ -105,13 +123,61 @@ export function ResultDetailModal({ result, onClose }: ResultDetailModalProps) {
                   {result.mode === 'fast' ? '⚡ Fast' : '📊 Report'}
                 </span>
               </div>
-              <div>
-                <span className="text-gray-400">Start:</span>
-                <span className="text-white ml-2">{result.start}</span>
+              <div className="col-span-2">
+                <span className="text-gray-400">Time Window:</span>
+                <span className="text-white ml-2">
+                  {(() => {
+                    try {
+                      if (!result.start || !result.end) return 'N/A'
+                      let startStr = String(result.start).replace(/\+00:00Z$/, 'Z').replace(/\+00:00$/, 'Z')
+                      let endStr = String(result.end).replace(/\+00:00Z$/, 'Z').replace(/\+00:00$/, 'Z')
+                      const startDate = new Date(startStr)
+                      const endDate = new Date(endStr)
+                      if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+                        return 'Invalid date'
+                      }
+                      const formatUTC = (date: Date) => {
+                        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+                        const month = months[date.getUTCMonth()]
+                        const day = date.getUTCDate()
+                        const hours = date.getUTCHours().toString().padStart(2, '0')
+                        const minutes = date.getUTCMinutes().toString().padStart(2, '0')
+                        const seconds = date.getUTCSeconds().toString().padStart(2, '0')
+                        return `${month} ${day}, ${hours}:${minutes}:${seconds} UTC`
+                      }
+                      return `${formatUTC(startDate)} - ${formatUTC(endDate)}`
+                    } catch (e) {
+                      return 'Error formatting date'
+                    }
+                  })()}
+                </span>
               </div>
-              <div>
-                <span className="text-gray-400">End:</span>
-                <span className="text-white ml-2">{result.end}</span>
+              <div className="col-span-2">
+                <span className="text-gray-400">Executed At:</span>
+                <span className="text-white ml-2">
+                  {(() => {
+                    try {
+                      if (!result.execution_time) return 'N/A'
+                      let execStr = String(result.execution_time).replace(/\+00:00Z$/, 'Z').replace(/\+00:00$/, 'Z')
+                      const execDate = new Date(execStr)
+                      if (isNaN(execDate.getTime())) {
+                        return 'Invalid date'
+                      }
+                      const formatUTC = (date: Date) => {
+                        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+                        const month = months[date.getUTCMonth()]
+                        const day = date.getUTCDate()
+                        const hours = date.getUTCHours().toString().padStart(2, '0')
+                        const minutes = date.getUTCMinutes().toString().padStart(2, '0')
+                        const seconds = date.getUTCSeconds().toString().padStart(2, '0')
+                        return `${month} ${day}, ${hours}:${minutes}:${seconds} UTC`
+                      }
+                      return formatUTC(execDate)
+                    } catch (e) {
+                      return 'Error formatting date'
+                    }
+                  })()}
+                </span>
               </div>
             </div>
           </div>
@@ -203,6 +269,28 @@ export function ResultDetailModal({ result, onClose }: ResultDetailModalProps) {
                 <div className="text-gray-400">Loading charts...</div>
               ) : (
                 <BacktestCharts result={result} timeline={timeline} />
+              )}
+            </div>
+          )}
+
+          {/* PnL Over Time Chart */}
+          {result.mode === 'report' && timeline.length > 0 && (
+            <div className="bg-dark-bg border border-dark-border rounded-lg p-4">
+              {loadingTimeline ? (
+                <div className="text-gray-400">Loading PnL chart...</div>
+              ) : (
+                <PnLChart result={result} timeline={timeline} />
+              )}
+            </div>
+          )}
+
+          {/* Tick Price Chart with Filled Orders */}
+          {result.mode === 'report' && tickData.length > 0 && fills.length > 0 && (
+            <div className="bg-dark-bg border border-dark-border rounded-lg p-4">
+              {loadingTicks || loadingFills ? (
+                <div className="text-gray-400">Loading tick chart...</div>
+              ) : (
+                <TickPriceChart tickData={tickData} fills={fills} />
               )}
             </div>
           )}
