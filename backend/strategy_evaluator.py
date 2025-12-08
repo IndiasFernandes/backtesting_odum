@@ -332,30 +332,39 @@ class StrategyEvaluator:
     
     @staticmethod
     def _calculate_position_statistics(engine, instrument_id: InstrumentId) -> Dict[str, Any]:
-        """Calculate order statistics: buy/sell orders and market/limit orders."""
+        """Calculate order statistics: buy/sell order counts and total quantities."""
         try:
             if not engine or not hasattr(engine, 'cache'):
                 return {
                     "buy_orders": 0,
+                    "buy_quantity": 0.0,
                     "sell_orders": 0,
+                    "sell_quantity": 0.0,
                     "market_orders": 0,
                     "limit_orders": 0,
                 }
             
             buy_orders = 0
+            buy_quantity = 0.0
             sell_orders = 0
+            sell_quantity = 0.0
             market_orders = 0
             limit_orders = 0
             
-            # Get all orders from cache to analyze order types
+            # Get all orders from cache to analyze order types and quantities
             all_orders = engine.cache.orders()
             orders_by_id = {}
             
-            # Build a map of order IDs to order types
+            # Build a map of order IDs to order types and quantities
             for order in all_orders:
                 try:
                     order_id = str(order.client_order_id)
                     order_side = order.side.name.upper() if hasattr(order.side, 'name') else str(order.side).upper()
+                    
+                    # Get order quantity
+                    order_qty = 0.0
+                    if hasattr(order, 'quantity') and order.quantity:
+                        order_qty = float(order.quantity.as_decimal())
                     
                     # Try to get order type from order object
                     order_type = None
@@ -375,17 +384,18 @@ class StrategyEvaluator:
                     
                     orders_by_id[order_id] = {
                         'side': order_side,
-                        'type': order_type.upper()
+                        'type': order_type.upper(),
+                        'quantity': order_qty
                     }
                 except Exception:
                     continue
             
-            # Get all fills to count buy/sell orders
+            # Get all fills to count buy/sell orders and calculate quantities
             fills_report = None
             if hasattr(engine, 'trader') and engine.trader:
                 fills_report = engine.trader.generate_order_fills_report()
             
-            # Analyze from fills report to count buy/sell orders
+            # Analyze from fills report to count buy/sell orders and sum quantities
             if fills_report is not None and not fills_report.empty:
                 instrument_id_str = str(instrument_id)
                 if 'instrument_id' in fills_report.columns:
@@ -408,14 +418,24 @@ class StrategyEvaluator:
                             if 'client_order_id' in row:
                                 order_id = str(row['client_order_id'])
                             
-                            # Count buy/sell orders (count each unique order once)
+                            # Get fill quantity
+                            fill_qty = 0.0
+                            if 'last_qty' in row:
+                                try:
+                                    fill_qty = float(row['last_qty'])
+                                except (ValueError, TypeError):
+                                    pass
+                            
+                            # Count buy/sell orders (count each unique order once) and sum quantities
                             if order_id and order_id not in processed_orders:
                                 processed_orders.add(order_id)
                                 
                                 if order_side == 'BUY':
                                     buy_orders += 1
+                                    buy_quantity += fill_qty if fill_qty > 0 else (orders_by_id.get(order_id, {}).get('quantity', 0.0))
                                 elif order_side == 'SELL':
                                     sell_orders += 1
+                                    sell_quantity += fill_qty if fill_qty > 0 else (orders_by_id.get(order_id, {}).get('quantity', 0.0))
                                 
                                 # Count market/limit orders
                                 if order_id in orders_by_id:
@@ -431,10 +451,13 @@ class StrategyEvaluator:
             # Fallback: If no fills report, count from orders cache directly
             if buy_orders == 0 and sell_orders == 0:
                 for order_id, order_info in orders_by_id.items():
+                    qty = order_info.get('quantity', 0.0)
                     if order_info['side'] == 'BUY':
                         buy_orders += 1
+                        buy_quantity += qty
                     elif order_info['side'] == 'SELL':
                         sell_orders += 1
+                        sell_quantity += qty
                     
                     if order_info['type'] == 'MARKET':
                         market_orders += 1
@@ -443,7 +466,9 @@ class StrategyEvaluator:
             
             return {
                 "buy_orders": buy_orders,
+                "buy_quantity": buy_quantity,
                 "sell_orders": sell_orders,
+                "sell_quantity": sell_quantity,
                 "market_orders": market_orders,
                 "limit_orders": limit_orders,
             }
@@ -453,7 +478,9 @@ class StrategyEvaluator:
             traceback.print_exc()
             return {
                 "buy_orders": 0,
+                "buy_quantity": 0.0,
                 "sell_orders": 0,
+                "sell_quantity": 0.0,
                 "market_orders": 0,
                 "limit_orders": 0,
             }
@@ -488,16 +515,29 @@ class StrategyEvaluator:
                         except Exception:
                             pass
                     
+                    # Safely convert position attributes to float
+                    def safe_float(value, default=0.0):
+                        """Safely convert Money/Price/Quantity to float."""
+                        if value is None:
+                            return default
+                        if isinstance(value, (int, float)):
+                            return float(value)
+                        if hasattr(value, 'as_decimal'):
+                            return float(value.as_decimal())
+                        return default
+                    
                     return {
-                        "quantity": float(pos.quantity.as_decimal()),
+                        "quantity": safe_float(pos.quantity),
                         "side": pos.side.name if hasattr(pos.side, 'name') else str(pos.side),
-                        "entry_price": float(pos.avg_px_open.as_decimal()) if pos.avg_px_open else 0.0,
-                        "current_price": float(pos.avg_px_close.as_decimal()) if pos.avg_px_close else 0.0,
-                        "realized_pnl": float(pos.realized_pnl.as_decimal()) if pos.realized_pnl else 0.0,
+                        "entry_price": safe_float(pos.avg_px_open),
+                        "current_price": safe_float(pos.avg_px_close),
+                        "realized_pnl": safe_float(pos.realized_pnl),
                         "unrealized_pnl": unrealized_pnl_val,
                     }
         except Exception as e:
-            print(f"Warning: Could not get position info: {e}")
+            # Only log warning if it's not a common expected case (e.g., no position)
+            if "position" not in str(e).lower() and "none" not in str(e).lower():
+                print(f"Warning: Could not get position info: {e}")
         
         return {
             "quantity": 0.0,

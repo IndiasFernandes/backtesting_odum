@@ -73,6 +73,29 @@ def _resolve_config_path(config_name: str) -> Optional[Path]:
     return None
 
 
+def _get_results_output_dir() -> Path:
+    """Get the results output directory, trying multiple possible paths."""
+    import os
+    cwd = Path(os.getcwd())
+    
+    # Try multiple possible base paths
+    possible_bases = [
+        cwd,  # Current working directory
+        Path(__file__).parent.parent.parent,  # Project root relative to this file
+        Path("/app"),  # Docker absolute path
+    ]
+    
+    for base in possible_bases:
+        results_dir = base / "backend" / "backtest_results"
+        if results_dir.exists():
+            return results_dir
+    
+    # Fallback: create in current directory
+    results_dir = cwd / "backend" / "backtest_results"
+    results_dir.mkdir(parents=True, exist_ok=True)
+    return results_dir
+
+
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint."""
@@ -164,12 +187,17 @@ def _run_backtest_sync(
             
             # Save results to disk (same as CLI)
             from backend.results import ResultSerializer
+            results_base = _get_results_output_dir()
+            
             if request.fast:
-                output_dir = Path("backend/backtest_results/fast")
+                output_dir = results_base / "fast"
+                output_dir.mkdir(parents=True, exist_ok=True)
                 ResultSerializer.save_fast(result, output_dir)
+                print(f"Fast mode result saved to: {output_dir}/{result['run_id']}.json")
             elif request.report or not request.fast:
                 # Report mode (explicit or default when fast=False)
-                output_dir = Path("backend/backtest_results/report")
+                output_dir = results_base / "report"
+                output_dir.mkdir(parents=True, exist_ok=True)
                 ResultSerializer.save_report(result, output_dir)
                 print(f"Report mode result saved to: {output_dir}/{result['run_id']}/summary.json")
             
@@ -242,12 +270,17 @@ async def run_backtest(request: BacktestRunRequest) -> Dict[str, Any]:
             
             # Save results to disk (same as CLI)
             from backend.results import ResultSerializer
+            results_base = _get_results_output_dir()
+            
             if request.fast:
-                output_dir = Path("backend/backtest_results/fast")
+                output_dir = results_base / "fast"
+                output_dir.mkdir(parents=True, exist_ok=True)
                 ResultSerializer.save_fast(result, output_dir)
+                print(f"Fast mode result saved to: {output_dir}/{result['run_id']}.json")
             elif request.report or not request.fast:
                 # Report mode (explicit or default when fast=False)
-                output_dir = Path("backend/backtest_results/report")
+                output_dir = results_base / "report"
+                output_dir.mkdir(parents=True, exist_ok=True)
                 ResultSerializer.save_report(result, output_dir)
                 print(f"Report mode result saved to: {output_dir}/{result['run_id']}/summary.json")
             
@@ -260,7 +293,6 @@ async def run_backtest(request: BacktestRunRequest) -> Dict[str, Any]:
             result['latest_step'] = latest_step
             
             return result
-            
         except HTTPException:
             # Re-raise HTTP exceptions as-is
             raise
@@ -358,88 +390,153 @@ async def run_backtest_stream(request: BacktestRunRequest):
 
 
 def _load_results_fast() -> List[Dict[str, Any]]:
-    """Load fast results synchronously (called from async endpoint). Optimized for speed."""
+    """Load fast results synchronously (called from async endpoint). Loads ALL results."""
     results = []
     
-    # Only scan fast results (limit to most recent 100 files)
     # Try multiple possible paths for Docker compatibility
+    # Also try resolving relative to current working directory
+    import os
+    cwd = Path(os.getcwd())
     possible_paths = [
         Path("backend/backtest_results/fast"),  # Relative from project root
         Path("/app/backend/backtest_results/fast"),  # Docker absolute path
         Path(__file__).parent.parent.parent / "backtest_results" / "fast",  # Relative from this file
+        cwd / "backend" / "backtest_results" / "fast",  # Relative from current working directory
+        cwd / "backtest_results" / "fast",  # Alternative relative path
     ]
     
     fast_dir = None
     for path in possible_paths:
-        if path.exists():
-            fast_dir = path
+        abs_path = path.resolve()
+        if abs_path.exists():
+            fast_dir = abs_path
+            print(f"DEBUG: Found fast directory at: {fast_dir}")
             break
     
     if not fast_dir or not fast_dir.exists():
-        # Return empty list if directory doesn't exist
+        print(f"DEBUG: Fast directory not found. Tried paths: {[str(p) for p in possible_paths]}")
         return results
     
     try:
+        # Load ALL fast results (no limit)
+        # Sort by modification time (newest first) to preserve chronological order
         fast_files = sorted(
             [f for f in fast_dir.glob("*.json") if f.is_file()],
             key=lambda p: p.stat().st_mtime,
             reverse=True
-        )[:100]  # Limit to 100 most recent
+        )
         
         for result_file in fast_files:
             try:
+                # Get modification time for sorting (fallback for old results)
+                mtime = result_file.stat().st_mtime
                 with open(result_file, 'r') as f:
                     data = json.load(f)
                     # Only include fast mode results
                     if data.get('mode') == 'fast':
+                        # Use execution_time if available, otherwise use file mtime as fallback
+                        execution_time = data.get('execution_time')
+                        if not execution_time or execution_time is None:
+                            # Convert mtime to ISO format UTC string for consistency
+                            from datetime import datetime, timezone
+                            execution_time = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat().replace('+00:00', 'Z')
+                            print(f"DEBUG: Set execution_time for {data.get('run_id')}: {execution_time}")
+                        # Always set execution_time to ensure it's present
+                        data['execution_time'] = execution_time
+                        data['_execution_time_sort'] = execution_time  # Internal field for sorting
                         results.append(data)
             except (json.JSONDecodeError, IOError, OSError, KeyError) as e:
                 # Skip malformed files
                 continue
     except (OSError, PermissionError) as e:
-        # If we can't read the directory, return empty list
-        # The error will be handled by the endpoint
         raise
     
-    # Sort by run_id (which contains timestamp) descending to show newest first
-    results.sort(key=lambda x: x.get('run_id', ''), reverse=True)
+    # Sort by execution_time (newest first)
+    results.sort(key=lambda x: x.get('_execution_time_sort', ''), reverse=True)
+    
+    # Remove internal sorting field before returning, but keep execution_time
+    for result in results:
+        result.pop('_mtime', None)
+        result.pop('_execution_time_sort', None)
+        # Ensure execution_time is present and not None (should already be set above)
+        if 'execution_time' not in result or result.get('execution_time') is None:
+            # Fallback: use file mtime if available, otherwise current time
+            from datetime import datetime, timezone
+            run_id = result.get('run_id', '')
+            mtime = None
+            try:
+                # Try to get file mtime
+                fast_paths = [
+                    Path(f"backend/backtest_results/fast/{run_id}.json"),
+                    Path(f"/app/backend/backtest_results/fast/{run_id}.json"),
+                ]
+                for path in fast_paths:
+                    if path.exists():
+                        mtime = path.stat().st_mtime
+                        break
+            except Exception:
+                pass
+            
+            if mtime:
+                result['execution_time'] = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat().replace('+00:00', 'Z')
+            else:
+                result['execution_time'] = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
     
     return results
 
 def _load_results_report() -> List[Dict[str, Any]]:
-    """Load report results synchronously (called from async endpoint). Returns lightweight metadata only."""
+    """Load report results synchronously (called from async endpoint). Returns lightweight metadata only. Loads ALL results."""
     results = []
     
-    # Scan report results (limit to most recent 50 directories for performance)
     # Try multiple possible paths for Docker compatibility
+    # Also try resolving relative to current working directory
+    import os
+    cwd = Path(os.getcwd())
     possible_paths = [
         Path("backend/backtest_results/report"),  # Relative from project root
         Path("/app/backend/backtest_results/report"),  # Docker absolute path
         Path(__file__).parent.parent.parent / "backtest_results" / "report",  # Relative from this file
+        cwd / "backend" / "backtest_results" / "report",  # Relative from current working directory
+        cwd / "backtest_results" / "report",  # Alternative relative path
     ]
     
     report_dir = None
     for path in possible_paths:
-        if path.exists():
-            report_dir = path
+        abs_path = path.resolve()
+        if abs_path.exists():
+            report_dir = abs_path
+            print(f"DEBUG: Found report directory at: {report_dir}")
             break
     
     if not report_dir or not report_dir.exists():
+        print(f"DEBUG: Report directory not found. Tried paths: {[str(p) for p in possible_paths]}")
         return results
     
     try:
+        # Load ALL report results (no limit)
+        # Sort by modification time (newest first) to preserve chronological order
         report_dirs = sorted(
-            [d for d in report_dir.iterdir() if d.is_dir()],
+            [d for d in report_dir.iterdir() if d.is_dir() and not d.name.startswith('.')],
             key=lambda p: p.stat().st_mtime,
             reverse=True
-        )[:50]  # Limit to 50 most recent
+        )
         
         for run_dir in report_dirs:
-            summary_file = run_dir / "summary.json"
-            if summary_file.exists():
-                try:
-                    with open(summary_file, 'r') as f:
-                        data = json.load(f)
+                summary_file = run_dir / "summary.json"
+                if summary_file.exists():
+                    try:
+                        # Get modification time for sorting (fallback for old results)
+                        mtime = summary_file.stat().st_mtime
+                        with open(summary_file, 'r') as f:
+                            data = json.load(f)
+                        
+                        # Use execution_time if available, otherwise use file mtime as fallback
+                        execution_time = data.get('execution_time')
+                        if not execution_time or execution_time is None:
+                            # Convert mtime to ISO format UTC string for consistency
+                            from datetime import datetime, timezone
+                            execution_time = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat().replace('+00:00', 'Z')
+                        
                         # Return lightweight version with just metadata and summary
                         results.append({
                             "run_id": data.get('run_id'),
@@ -448,24 +545,130 @@ def _load_results_report() -> List[Dict[str, Any]]:
                             "dataset": data.get('dataset'),
                             "start": data.get('start'),
                             "end": data.get('end'),
+                            "execution_time": execution_time,
                             "summary": data.get('summary', {}),
-                            "metadata": data.get('metadata', {})
+                            "metadata": data.get('metadata', {}),
+                            "_execution_time_sort": execution_time  # Internal field for sorting
                         })
-                except (json.JSONDecodeError, IOError, OSError, KeyError):
-                    continue
+                    except (json.JSONDecodeError, IOError, OSError, KeyError):
+                        # Skip malformed files
+                        continue
     except (OSError, PermissionError):
         raise
     
-    # Sort by run_id (which contains timestamp) descending to show newest first
-    results.sort(key=lambda x: x.get('run_id', ''), reverse=True)
+    # Sort by execution_time (newest first)
+    results.sort(key=lambda x: x.get('_execution_time_sort', ''), reverse=True)
+    
+    # Remove internal sorting field before returning
+    for result in results:
+        result.pop('_execution_time_sort', None)
     
     return results
 
+def _load_all_results() -> List[Dict[str, Any]]:
+    """Load both fast and report results, combined and sorted."""
+    fast_results = _load_results_fast()
+    report_results = _load_results_report()
+    
+    # Combine both lists and add mtime for sorting
+    all_results = []
+    for result in fast_results + report_results:
+        # Try to get mtime from file system if not already present
+        run_id = result.get('run_id', '')
+        if not result.get('_mtime'):
+            # Try to find the file and get its mtime
+            try:
+                # For report mode, check report directory
+                report_paths = [
+                    Path(f"backend/backtest_results/report/{run_id}/summary.json"),
+                    Path(f"/app/backend/backtest_results/report/{run_id}/summary.json"),
+                ]
+                for path in report_paths:
+                    if path.exists():
+                        result['_mtime'] = path.stat().st_mtime
+                        break
+                
+                # For fast mode, check fast directory
+                if not result.get('_mtime'):
+                    fast_paths = [
+                        Path(f"backend/backtest_results/fast/{run_id}.json"),
+                        Path(f"/app/backend/backtest_results/fast/{run_id}.json"),
+                    ]
+                    for path in fast_paths:
+                        if path.exists():
+                            result['_mtime'] = path.stat().st_mtime
+                            break
+            except Exception:
+                pass
+        
+        all_results.append(result)
+    
+    # Ensure execution_time is present for all results (fallback to file mtime if missing)
+    for result in all_results:
+        run_id = result.get('run_id', 'unknown')
+        if 'execution_time' not in result or result.get('execution_time') is None:
+            print(f"DEBUG _load_all_results: Missing execution_time for {run_id}, adding fallback")
+            # Try to get from file mtime
+            run_id = result.get('run_id', '')
+            try:
+                from datetime import datetime, timezone
+                # Try report directory first
+                report_paths = [
+                    Path(f"backend/backtest_results/report/{run_id}/summary.json"),
+                    Path(f"/app/backend/backtest_results/report/{run_id}/summary.json"),
+                ]
+                mtime = None
+                for path in report_paths:
+                    if path.exists():
+                        mtime = path.stat().st_mtime
+                        break
+                
+                # Try fast directory if not found
+                if mtime is None:
+                    fast_paths = [
+                        Path(f"backend/backtest_results/fast/{run_id}.json"),
+                        Path(f"/app/backend/backtest_results/fast/{run_id}.json"),
+                    ]
+                    for path in fast_paths:
+                        if path.exists():
+                            mtime = path.stat().st_mtime
+                            break
+                
+                if mtime:
+                    result['execution_time'] = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat().replace('+00:00', 'Z')
+                else:
+                    # Last resort: use current time
+                    result['execution_time'] = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+            except Exception:
+                # If all else fails, use current time
+                from datetime import datetime, timezone
+                result['execution_time'] = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+    
+    # Sort by execution_time (newest first) - most recent results appear first
+    all_results.sort(key=lambda x: x.get('execution_time', ''), reverse=True)
+    
+    return all_results
+
 
 @app.get("/api/backtest/results")
-@app.get("/api/backtest/results/fast")
 async def get_results() -> List[Dict[str, Any]]:
-    """List all fast backtest results. Optimized for fast loading."""
+    """List all backtest results (both fast and report modes combined)."""
+    try:
+        # Run file I/O in thread pool to avoid blocking
+        loop = asyncio.get_event_loop()
+        results = await loop.run_in_executor(None, _load_all_results)
+        return results
+    except Exception as e:
+        # Log the error and return a proper HTTP error response
+        import traceback
+        error_detail = f"Error loading backtest results: {str(e)}"
+        print(f"Error in get_results: {error_detail}")
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=error_detail)
+
+@app.get("/api/backtest/results/fast")
+async def get_fast_results() -> List[Dict[str, Any]]:
+    """List only fast mode backtest results."""
     try:
         # Run file I/O in thread pool to avoid blocking
         loop = asyncio.get_event_loop()
@@ -475,7 +678,7 @@ async def get_results() -> List[Dict[str, Any]]:
         # Log the error and return a proper HTTP error response
         import traceback
         error_detail = f"Error loading fast backtest results: {str(e)}"
-        print(f"Error in get_results: {error_detail}")
+        print(f"Error in get_fast_results: {error_detail}")
         print(traceback.format_exc())
         raise HTTPException(status_code=500, detail=error_detail)
 
@@ -497,38 +700,148 @@ async def get_report_results() -> List[Dict[str, Any]]:
         raise HTTPException(status_code=500, detail=error_detail)
 
 
-@app.get("/api/backtest/results/{run_id}")
-async def get_result(run_id: str) -> Dict[str, Any]:
-    """Get a specific backtest result (fast or report)."""
-    # Try multiple possible paths for Docker compatibility
-    fast_paths = [
-        Path(f"backend/backtest_results/fast/{run_id}.json"),
-        Path(f"/app/backend/backtest_results/fast/{run_id}.json"),
-    ]
-    
-    for fast_file in fast_paths:
-        if fast_file.exists():
-            try:
-                with open(fast_file, 'r') as f:
-                    return json.load(f)
-            except (json.JSONDecodeError, IOError, OSError):
-                continue
-    
-    # Try report results
+@app.get("/api/backtest/results/{run_id}/fills")
+async def get_fills(run_id: str) -> List[Dict[str, Any]]:
+    """Get all fills for a specific backtest result."""
+    # Try report results first (only report mode has fills detail)
+    # Use same path resolution as get_report_result
     report_paths = [
-        Path(f"backend/backtest_results/report/{run_id}/summary.json"),
-        Path(f"/app/backend/backtest_results/report/{run_id}/summary.json"),
+        Path(f"backend/backtest_results/report/{run_id}"),
+        Path(f"/app/backend/backtest_results/report/{run_id}"),
     ]
     
-    for report_file in report_paths:
-        if report_file.exists():
-            try:
-                with open(report_file, 'r') as f:
-                    return json.load(f)
-            except (json.JSONDecodeError, IOError, OSError):
-                continue
+    report_dir = None
+    for path in report_paths:
+        if path.exists():
+            report_dir = path
+            break
     
-    raise HTTPException(status_code=404, detail=f"Result not found: {run_id}")
+    if not report_dir or not report_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Report result not found: {run_id}")
+    
+    fills = []
+    timeline_file = report_dir / "timeline.json"
+    if timeline_file.exists():
+        try:
+            loop = asyncio.get_event_loop()
+            def load_timeline():
+                with open(timeline_file, 'r') as f:
+                    return json.load(f)
+            timeline_data = await loop.run_in_executor(None, load_timeline)
+            if isinstance(timeline_data, list):
+                fills = []
+                for event in timeline_data:
+                    if event.get('event') == 'Fill':
+                        fill_data = dict(event.get('data', {}))
+                        ts = event.get('ts', '')
+                        fill_data['timestamp'] = ts
+                        fills.append(fill_data)
+                # Sort by timestamp
+                fills.sort(key=lambda x: x.get('timestamp', ''))
+        except (json.JSONDecodeError, IOError, OSError, Exception) as e:
+            print(f"Error loading fills: {e}")
+            import traceback
+            traceback.print_exc()
+            pass
+    
+    return fills
+
+
+@app.get("/api/backtest/results/{run_id}/rejected-orders")
+async def get_rejected_orders(run_id: str) -> Dict[str, Any]:
+    """Get rejected/denied orders for a specific backtest result with analysis."""
+    # Try report results first (only report mode has order details)
+    # Use same path resolution as get_report_result
+    report_paths = [
+        Path(f"backend/backtest_results/report/{run_id}"),
+        Path(f"/app/backend/backtest_results/report/{run_id}"),
+    ]
+    
+    report_dir = None
+    for path in report_paths:
+        if path.exists():
+            report_dir = path
+            break
+    
+    if not report_dir or not report_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Report result not found: {run_id}")
+    
+    rejected_orders = []
+    # First, try to get timestamps from timeline
+    timeline_file = report_dir / "timeline.json"
+    timeline_orders_map = {}
+    if timeline_file.exists():
+        try:
+            loop = asyncio.get_event_loop()
+            def load_timeline():
+                with open(timeline_file, 'r') as f:
+                    return json.load(f)
+            timeline_data = await loop.run_in_executor(None, load_timeline)
+            if isinstance(timeline_data, list):
+                # Map order IDs to their timestamps from timeline
+                for event in timeline_data:
+                    if event.get('event') == 'Order' and event.get('data'):
+                        order_id = event['data'].get('id')
+                        if order_id:
+                            timeline_orders_map[order_id] = event.get('ts', '')
+        except (json.JSONDecodeError, IOError, OSError, Exception) as e:
+            print(f"Error loading timeline for rejected orders: {e}")
+            pass
+    
+    orders_file = report_dir / "orders.json"
+    if orders_file.exists():
+        try:
+            loop = asyncio.get_event_loop()
+            orders_data = await loop.run_in_executor(None, lambda: json.loads(orders_file.read_text()))
+            if isinstance(orders_data, list):
+                rejected_orders = []
+                for order in orders_data:
+                    if order.get('status') in ['denied', 'rejected']:
+                        order_with_timestamp = order.copy()
+                        # Add timestamp from timeline if available
+                        order_id = order.get('id')
+                        if order_id in timeline_orders_map:
+                            order_with_timestamp['timestamp'] = timeline_orders_map[order_id]
+                        rejected_orders.append(order_with_timestamp)
+                # Sort by timestamp if available
+                rejected_orders.sort(key=lambda x: x.get('timestamp', ''))
+        except (json.JSONDecodeError, IOError, OSError, Exception) as e:
+            print(f"Error loading rejected orders: {e}")
+            pass
+    
+    # Analyze rejection patterns
+    analysis = {
+        'total_rejected': len(rejected_orders),
+        'by_side': {},
+        'by_price_range': {},
+        'common_patterns': []
+    }
+    
+    if rejected_orders:
+        # Count by side
+        buy_rejected = sum(1 for o in rejected_orders if o.get('side') == 'buy')
+        sell_rejected = sum(1 for o in rejected_orders if o.get('side') == 'sell')
+        analysis['by_side'] = {
+            'buy': buy_rejected,
+            'sell': sell_rejected
+        }
+        
+        # Analyze price ranges (if prices available)
+        if rejected_orders and 'price' in rejected_orders[0]:
+            prices = [o['price'] for o in rejected_orders if 'price' in o]
+            if prices:
+                min_price = min(prices)
+                max_price = max(prices)
+                analysis['price_range'] = {
+                    'min': min_price,
+                    'max': max_price,
+                    'avg': sum(prices) / len(prices)
+                }
+    
+    return {
+        'rejected_orders': rejected_orders,
+        'analysis': analysis
+    }
 
 
 @app.get("/api/backtest/results/{run_id}/report")

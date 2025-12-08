@@ -6,11 +6,13 @@
   },
   "venue": {
     "name": "BINANCE",
-    "oms_type": "FUTURES",
+    "oms_type": "NETTING",
     "account_type": "MARGIN",
     "base_currency": "USDT",
     "starting_balance": 1000000,
-    "book_type": "L2_MBP"
+    "book_type": "L2_MBP",
+    "maker_fee": 0.0002,
+    "taker_fee": 0.0004
   },
   "data_catalog": {
     "parquet_root": "backend/data/parquet/",

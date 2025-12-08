@@ -2,7 +2,7 @@
 import json
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
@@ -99,6 +99,9 @@ class ResultSerializer:
         else:
             end_str = end_str + "Z"
         
+        # Add execution time (when backtest was run)
+        execution_time = datetime.now(timezone.utc)
+        
         return {
             "run_id": run_id,
             "mode": "fast",
@@ -106,6 +109,7 @@ class ResultSerializer:
             "dataset": dataset,
             "start": start_str,
             "end": end_str,
+            "execution_time": format_date(execution_time),
             "summary": summary,
             "metadata": {
                 "config_path": config_path,
@@ -154,6 +158,9 @@ class ResultSerializer:
             else:
                 return dt.isoformat() + "Z"
         
+        # Add execution time (when backtest was run)
+        execution_time = datetime.now(timezone.utc)
+        
         return {
             "run_id": run_id,
             "mode": "report",
@@ -161,6 +168,7 @@ class ResultSerializer:
             "dataset": dataset,
             "start": format_date(start),
             "end": format_date(end),
+            "execution_time": format_date(execution_time),
             "summary": summary,
             "timeline": timeline,
             "orders": orders,

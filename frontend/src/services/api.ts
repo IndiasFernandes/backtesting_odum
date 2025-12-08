@@ -30,6 +30,7 @@ export interface BacktestResult {
   dataset: string
   start: string
   end: string
+  execution_time?: string
   summary: {
     orders: number
     fills: number
@@ -153,6 +154,23 @@ export const backtestApi = {
 
   getTickData: async (runId: string): Promise<unknown> => {
     const response = await api.get<unknown>(`/api/backtest/results/${runId}/ticks`)
+    return response.data
+  },
+
+  getFills: async (runId: string): Promise<Array<{ order_id: string; price: number; quantity: number; timestamp: string }>> => {
+    const response = await api.get<Array<{ order_id: string; price: number; quantity: number; timestamp: string }>>(`/api/backtest/results/${runId}/fills`)
+    return response.data
+  },
+
+  getRejectedOrders: async (runId: string): Promise<{
+    rejected_orders: Array<{ id: string; side: string; price: number; amount: number; status: string; timestamp?: string }>
+    analysis: {
+      total_rejected: number
+      by_side: { buy: number; sell: number }
+      price_range?: { min: number; max: number; avg: number }
+    }
+  }> => {
+    const response = await api.get(`/api/backtest/results/${runId}/rejected-orders`)
     return response.data
   },
 

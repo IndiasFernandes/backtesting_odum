@@ -1,35 +1,150 @@
 import { useState, useEffect, useRef } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { backtestApi, BacktestRunRequest } from '../services/api'
+import { useToastContext } from '../components/Layout'
 
 export default function BacktestRunnerPage() {
-  // Pre-fill with example values for Binance Futures May 23, 19:23-19:28 UTC
+  const toast = useToastContext()
+  
+  // Pre-fill with example values for Binance Futures May 23, 02:00-02:05 UTC (5 minutes)
   const [formData, setFormData] = useState<BacktestRunRequest>({
     instrument: 'BTCUSDT',
     dataset: 'day-2023-05-23',
-    config: 'external/data_downloads/configs/binance_futures_btcusdt_l2_trades_config.json',
-    start: '2023-05-23T19:23',
-    end: '2023-05-23T19:28',
+    config: 'binance_futures_btcusdt_l2_trades_config.json',
+    start: '2023-05-23T02:00',
+    end: '2023-05-23T02:05',
     fast: false,
-    report: false,
+    report: true,
     export_ticks: false,
     snapshot_mode: 'both',
   })
+
+  const [validationErrors, setValidationErrors] = useState<Record<string, string>>({})
+
+  const { data: datasets } = useQuery({
+    queryKey: ['datasets'],
+    queryFn: () => backtestApi.getDatasets(),
+  })
+
+  const { data: configs } = useQuery({
+    queryKey: ['configs'],
+    queryFn: () => backtestApi.getConfigs(),
+  })
+
+  // Set default values once datasets and configs are loaded
+  useEffect(() => {
+    if (datasets && datasets.length > 0) {
+      // Set to example dataset if available and not already set, otherwise first available
+      const currentDataset = formData.dataset
+      if (!currentDataset || !datasets.includes(currentDataset)) {
+        const defaultDataset = datasets.includes('day-2023-05-23') 
+          ? 'day-2023-05-23' 
+          : datasets[0]
+        setFormData(prev => ({ ...prev, dataset: defaultDataset }))
+      }
+    }
+  }, [datasets, formData.dataset])
+
+  useEffect(() => {
+    if (configs && configs.length > 0) {
+      // Set to example config if available and not already set, otherwise first available
+      const currentConfig = formData.config
+      if (!currentConfig || !configs.includes(currentConfig)) {
+        const defaultConfig = configs.includes('binance_futures_btcusdt_l2_trades_config.json')
+          ? 'binance_futures_btcusdt_l2_trades_config.json'
+          : configs[0]
+        setFormData(prev => ({ ...prev, config: defaultConfig }))
+      }
+    }
+  }, [configs, formData.config])
+
+  const validateForm = (): boolean => {
+    const errors: Record<string, string> = {}
+
+    // Instrument validation
+    if (!formData.instrument || formData.instrument.trim() === '') {
+      errors.instrument = 'Instrument is required'
+    }
+
+    // Dataset validation
+    if (!formData.dataset || formData.dataset.trim() === '') {
+      errors.dataset = 'Dataset is required'
+    } else if (datasets && !datasets.includes(formData.dataset)) {
+      errors.dataset = `Dataset "${formData.dataset}" not found. Available: ${datasets.slice(0, 5).join(', ')}${datasets.length > 5 ? '...' : ''}`
+    }
+
+    // Config validation
+    if (!formData.config || formData.config.trim() === '') {
+      errors.config = 'Config is required'
+    } else if (configs && !configs.includes(formData.config)) {
+      errors.config = `Config "${formData.config}" not found. Available: ${configs.slice(0, 5).join(', ')}${configs.length > 5 ? '...' : ''}`
+    }
+
+    // Time validation
+    if (!formData.start || !formData.end) {
+      if (!formData.start) errors.start = 'Start time is required'
+      if (!formData.end) errors.end = 'End time is required'
+    } else {
+      const startDate = new Date(formData.start + ':00Z')
+      const endDate = new Date(formData.end + ':00Z')
+      
+      if (isNaN(startDate.getTime())) {
+        errors.start = 'Invalid start time format'
+      }
+      if (isNaN(endDate.getTime())) {
+        errors.end = 'Invalid end time format'
+      }
+      if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
+        if (endDate <= startDate) {
+          errors.end = 'End time must be after start time'
+        }
+        // Check if time window is reasonable (not too long)
+        const durationMs = endDate.getTime() - startDate.getTime()
+        const durationHours = durationMs / (1000 * 60 * 60)
+        if (durationHours > 24) {
+          errors.end = 'Time window cannot exceed 24 hours'
+        }
+        if (durationMs < 60000) {
+          errors.end = 'Time window must be at least 1 minute'
+        }
+      }
+    }
+
+    // Mode validation
+    if (!formData.fast && !formData.report) {
+      errors.mode = 'Either Fast Mode or Report Mode must be selected'
+    }
+
+    setValidationErrors(errors)
+    return Object.keys(errors).length === 0
+  }
 
   const generateCLI = () => {
     // Format dates for CLI preview (add Z if not present)
     const formatForCLI = (datetimeLocal: string): string => {
       if (!datetimeLocal) return ''
+      // Convert datetime-local format to ISO8601 UTC format for CLI
+      // datetime-local format: YYYY-MM-DDTHH:mm
+      // CLI expects: YYYY-MM-DDTHH:mm:ssZ
       let clean = datetimeLocal.replace('Z', '')
-      if (!clean.includes(':', 13)) {
+      // Ensure seconds are included (add :00 if missing)
+      const timePart = clean.split('T')[1] || ''
+      if (timePart && timePart.split(':').length === 2) {
         clean = clean + ':00'
       }
       return clean + 'Z'
     }
     
+    // Config path format - use relative path from project root
+    // Only add prefix if config doesn't already have it
+    const configPath = formData.config.startsWith('external/') 
+      ? formData.config 
+      : `external/data_downloads/configs/${formData.config}`
+    
     const flags = [
       `--instrument ${formData.instrument}`,
       `--dataset ${formData.dataset}`,
-      `--config ${formData.config}`,
+      `--config ${configPath}`,
       `--start ${formatForCLI(formData.start)}`,
       `--end ${formatForCLI(formData.end)}`,
     ]
@@ -70,6 +185,13 @@ export default function BacktestRunnerPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    
+    // Validate form before submitting
+    if (!validateForm()) {
+      toast.error('Please fix form errors before submitting')
+      return
+    }
+
     setIsRunning(true)
     setError(null)
     setResult(null)
@@ -138,7 +260,7 @@ export default function BacktestRunnerPage() {
         <div className="bg-blue-900/30 border border-blue-700 rounded-lg p-3 text-sm">
           <div className="text-blue-300 font-medium mb-1">Example Ready to Test:</div>
           <div className="text-blue-200">
-            Binance Futures BTCUSDT • May 23, 2023 • 19:23-19:28 UTC
+            Binance Futures BTCUSDT • May 23, 2023 • 02:00-02:05 UTC (5 minutes)
           </div>
         </div>
       </div>
@@ -152,39 +274,77 @@ export default function BacktestRunnerPage() {
             <input
               type="text"
               value={formData.instrument}
-              onChange={(e) => setFormData({ ...formData, instrument: e.target.value })}
-              className="w-full bg-dark-bg border border-dark-border rounded px-3 py-2 text-white"
+              onChange={(e) => {
+                setFormData({ ...formData, instrument: e.target.value })
+                if (validationErrors.instrument) {
+                  setValidationErrors({ ...validationErrors, instrument: '' })
+                }
+              }}
+              className={`w-full bg-dark-bg border rounded px-3 py-2 text-white ${
+                validationErrors.instrument ? 'border-red-500' : 'border-dark-border'
+              }`}
               placeholder="BTCUSDT"
               required
             />
+            {validationErrors.instrument && (
+              <p className="mt-1 text-sm text-red-400">{validationErrors.instrument}</p>
+            )}
           </div>
 
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-2">
               Dataset
             </label>
-            <input
-              type="text"
-              value={formData.dataset}
-              onChange={(e) => setFormData({ ...formData, dataset: e.target.value })}
-              className="w-full bg-dark-bg border border-dark-border rounded px-3 py-2 text-white"
-              placeholder="day-2023-05-23"
+            <select
+              value={formData.dataset || ''}
+              onChange={(e) => {
+                setFormData({ ...formData, dataset: e.target.value })
+                if (validationErrors.dataset) {
+                  setValidationErrors({ ...validationErrors, dataset: '' })
+                }
+              }}
+              className={`w-full bg-dark-bg border rounded px-3 py-2 text-white ${
+                validationErrors.dataset ? 'border-red-500' : 'border-dark-border'
+              }`}
               required
-            />
+              disabled={!datasets || datasets.length === 0}
+            >
+              <option value="">{datasets && datasets.length > 0 ? 'Select dataset' : 'Loading datasets...'}</option>
+              {datasets?.map((ds) => (
+                <option key={ds} value={ds}>{ds}</option>
+              ))}
+            </select>
+            {validationErrors.dataset && (
+              <p className="mt-1 text-sm text-red-400">{validationErrors.dataset}</p>
+            )}
           </div>
 
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-2">
               Config
             </label>
-            <input
-              type="text"
-              value={formData.config}
-              onChange={(e) => setFormData({ ...formData, config: e.target.value })}
-              className="w-full bg-dark-bg border border-dark-border rounded px-3 py-2 text-white"
-              placeholder="external/data_downloads/configs/binance_futures_btcusdt_l2_trades_config.json"
+            <select
+              value={formData.config || ''}
+              onChange={(e) => {
+                setFormData({ ...formData, config: e.target.value })
+                if (validationErrors.config) {
+                  setValidationErrors({ ...validationErrors, config: '' })
+                }
+              }}
+              className={`w-full bg-dark-bg border rounded px-3 py-2 text-white ${
+                validationErrors.config ? 'border-red-500' : 'border-dark-border'
+              }`}
               required
-            />
+              disabled={!configs || configs.length === 0}
+            >
+              <option value="">{configs && configs.length > 0 ? 'Select config' : 'Loading configs...'}</option>
+              {configs?.map((cfg) => (
+                <option key={cfg} value={cfg}>{cfg}</option>
+              ))}
+            </select>
+            {validationErrors.config && (
+              <p className="mt-1 text-sm text-red-400">{validationErrors.config}</p>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-4">
@@ -196,13 +356,24 @@ export default function BacktestRunnerPage() {
                 type="datetime-local"
                 value={formData.start.replace('Z', '')}
                 onChange={(e) => {
-                  // datetime-local format: YYYY-MM-DDTHH:mm (no timezone)
                   const value = e.target.value
                   setFormData({ ...formData, start: value })
+                  if (validationErrors.start) {
+                    setValidationErrors({ ...validationErrors, start: '' })
+                  }
+                  // Re-validate end time if it exists
+                  if (formData.end && validationErrors.end) {
+                    validateForm()
+                  }
                 }}
-                className="w-full bg-dark-bg border border-dark-border rounded px-3 py-2 text-white"
+                className={`w-full bg-dark-bg border rounded px-3 py-2 text-white ${
+                  validationErrors.start ? 'border-red-500' : 'border-dark-border'
+                }`}
                 required
               />
+              {validationErrors.start && (
+                <p className="mt-1 text-sm text-red-400">{validationErrors.start}</p>
+              )}
             </div>
 
             <div>
@@ -213,13 +384,22 @@ export default function BacktestRunnerPage() {
                 type="datetime-local"
                 value={formData.end.replace('Z', '')}
                 onChange={(e) => {
-                  // datetime-local format: YYYY-MM-DDTHH:mm (no timezone)
                   const value = e.target.value
                   setFormData({ ...formData, end: value })
+                  if (validationErrors.end) {
+                    setValidationErrors({ ...validationErrors, end: '' })
+                  }
+                  // Re-validate when end time changes
+                  setTimeout(() => validateForm(), 100)
                 }}
-                className="w-full bg-dark-bg border border-dark-border rounded px-3 py-2 text-white"
+                className={`w-full bg-dark-bg border rounded px-3 py-2 text-white ${
+                  validationErrors.end ? 'border-red-500' : 'border-dark-border'
+                }`}
                 required
               />
+              {validationErrors.end && (
+                <p className="mt-1 text-sm text-red-400">{validationErrors.end}</p>
+              )}
             </div>
           </div>
 
@@ -239,11 +419,19 @@ export default function BacktestRunnerPage() {
           </div>
 
           <div className="space-y-2">
+            {validationErrors.mode && (
+              <p className="text-sm text-red-400">{validationErrors.mode}</p>
+            )}
             <label className="flex items-center">
               <input
                 type="checkbox"
                 checked={formData.fast}
-                onChange={(e) => setFormData({ ...formData, fast: e.target.checked, report: e.target.checked ? false : formData.report })}
+                onChange={(e) => {
+                  setFormData({ ...formData, fast: e.target.checked, report: e.target.checked ? false : formData.report })
+                  if (validationErrors.mode) {
+                    setValidationErrors({ ...validationErrors, mode: '' })
+                  }
+                }}
                 className="mr-2"
               />
               <span className="text-sm text-gray-300">Fast Mode</span>
@@ -252,7 +440,12 @@ export default function BacktestRunnerPage() {
               <input
                 type="checkbox"
                 checked={formData.report}
-                onChange={(e) => setFormData({ ...formData, report: e.target.checked, fast: e.target.checked ? false : formData.fast })}
+                onChange={(e) => {
+                  setFormData({ ...formData, report: e.target.checked, fast: e.target.checked ? false : formData.fast })
+                  if (validationErrors.mode) {
+                    setValidationErrors({ ...validationErrors, mode: '' })
+                  }
+                }}
                 className="mr-2"
               />
               <span className="text-sm text-gray-300">Report Mode</span>
