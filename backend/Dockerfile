@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.13-slim
 
 WORKDIR /app
 
@@ -10,17 +10,38 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     gnupg \
     fuse \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements
 COPY backend/requirements.txt /app/requirements.txt
 
+# Copy external directory first (may contain unified-cloud-services)
+COPY external/ /app/external/
+
+# Check if unified-cloud-services exists locally, otherwise use GitHub token
+# Priority: 1) Local copy, 2) GitHub token, 3) Direct (will fail for private repos)
+ARG GITHUB_TOKEN
+ARG GITHUB_USER=IggyIkenna
+
 # Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Strategy: Try local copy first, then tokenized URL, then direct
+RUN if [ -d "/app/external/unified-cloud-services" ] && ([ -f "/app/external/unified-cloud-services/setup.py" ] || [ -f "/app/external/unified-cloud-services/pyproject.toml" ]); then \
+        echo "✅ Using local unified-cloud-services package"; \
+        sed -i '/git+https:\/\/github.com\/IggyIkenna\/unified-cloud-services.git/d' /app/requirements.txt && \
+        pip install --no-cache-dir /app/external/unified-cloud-services && \
+        pip install --no-cache-dir -r requirements.txt; \
+    elif [ -n "$GITHUB_TOKEN" ]; then \
+        echo "🔐 Using GitHub token for private repo access"; \
+        sed -i "s|git+https://github.com/${GITHUB_USER}/unified-cloud-services.git|git+https://${GITHUB_TOKEN}@github.com/${GITHUB_USER}/unified-cloud-services.git|g" /app/requirements.txt && \
+        pip install --no-cache-dir -r requirements.txt; \
+    else \
+        echo "⚠️  No local copy or token found, attempting direct install (may fail for private repos)"; \
+        pip install --no-cache-dir -r requirements.txt; \
+    fi
 
 # Copy backend code
 COPY backend/ /app/backend/
-COPY external/ /app/external/
 
 # Set environment variables
 ENV PYTHONPATH=/app

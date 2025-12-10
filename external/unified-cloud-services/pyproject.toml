@@ -1,0 +1,78 @@
+[build-system]
+requires = ["setuptools>=80.9.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "unified-cloud-services"
+version = "1.3.0"
+description = "Standalone cloud services package for unified trading system - GCS, BigQuery, and domain-specific validation"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Ikenna Igboaka", email = "ikenna@odum-research.com"}
+]
+keywords = ["cloud", "gcs", "bigquery", "google-cloud", "trading", "market-data", "ml", "features"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+]
+requires-python = ">=3.13"
+dependencies = [
+    "pandas>=2.3.3",
+    "numpy>=2.3.5",  # Latest numpy 2.x (compatible with pandas 2.3.x and Python 3.13)
+    "google-cloud-storage>=3.6.0",
+    "google-cloud-bigquery>=3.38.0",
+    "google-cloud-secret-manager>=2.25.0",
+    "pyarrow>=22.0.0",
+    "pydantic>=2.12.5",
+    "pydantic-settings>=2.12.0",
+    "psutil>=5.9.0",  # System monitoring (performance_monitor.py, memory_monitor.py)
+    "web3>=6.0.0",  # Web3 client pool (web3_client_pool.py)
+    "requests>=2.32.5",  # HTTP session pool (http_session_pool.py)
+    "joblib>=1.3.0",  # ML model serialization (unified_cloud_service.py - upload/download joblib format)
+    "fsspec>=2024.2.0",  # Byte-range streaming for Parquet files
+    "gcsfs>=2024.2.0",  # GCS filesystem for fsspec
+]
+
+[project.scripts]
+# CLI commands available after pip install
+ucs-setup = "unified_cloud_services.cli:setup_gcsfuse"
+ucs-status = "unified_cloud_services.cli:print_status"
+ucs-mount = "unified_cloud_services.cli:mount_bucket"
+ucs-unmount = "unified_cloud_services.cli:unmount_bucket"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.1",
+    "pytest-asyncio>=1.3.0",
+    "pytest-cov>=7.0.0",
+    "black>=25.11.0",
+    "isort>=7.0.0",
+    "mypy>=1.19.0",
+    "pre-commit>=4.4.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/iggyikenna/unified-cloud-services"
+Documentation = "https://github.com/iggyikenna/unified-cloud-services"
+Repository = "https://github.com/iggyikenna/unified-cloud-services"
+
+[tool.setuptools]
+packages = ["unified_cloud_services", "unified_cloud_services.core", "unified_cloud_services.domain", "unified_cloud_services.models", "unified_cloud_services.adapters", "unified_cloud_services.adapters.defi", "unified_cloud_services.clients", "unified_cloud_services.testing", "unified_cloud_services.testing.e2e"]
+include-package-data = true
+
+[tool.black]
+line-length = 100
+target-version = ['py313']
+
+[tool.mypy]
+python_version = "3.13.7"
+warn_return_any = true
+disallow_untyped_defs = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+asyncio_mode = "auto"

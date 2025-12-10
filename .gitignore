@@ -42,6 +42,7 @@ frontend/public/tickdata/
 
 # Data files
 *.parquet
+*.zip
 data_downloads/raw_tick_data/
 
 # Logs
@@ -50,6 +51,11 @@ data_downloads/raw_tick_data/
 # Environment
 .env
 .env.local
+
+# Secrets (credentials, keys, certificates)
+.secrets/
+!.secrets/.gitkeep
+!.secrets/README.md
 
 # Documentation (excluded from repo)
 FUSE_SETUP.md

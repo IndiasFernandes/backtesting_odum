@@ -701,8 +701,24 @@ async def get_report_results() -> List[Dict[str, Any]]:
 
 
 @app.get("/api/backtest/results/{run_id}/fills")
-async def get_fills(run_id: str) -> List[Dict[str, Any]]:
-    """Get all fills for a specific backtest result."""
+async def get_fills(
+    run_id: str,
+    limit: int = 1000,
+    offset: int = 0
+) -> Dict[str, Any]:
+    """Get fills for a specific backtest result with pagination.
+    
+    Args:
+        run_id: Backtest run ID
+        limit: Maximum number of fills to return (default: 1000, max: 10000)
+        offset: Number of fills to skip (default: 0)
+    
+    Returns:
+        Dictionary with 'fills' array and 'total' count
+    """
+    # Cap limit to prevent excessive memory usage
+    limit = min(limit, 10000)
+    limit = max(limit, 1)  # At least 1
     # Try report results first (only report mode has fills detail)
     # Use same path resolution as get_report_result
     report_paths = [
@@ -760,12 +776,38 @@ async def get_fills(run_id: str) -> List[Dict[str, Any]]:
             traceback.print_exc()
             pass
     
-    return fills
+    # Return paginated results
+    total = len(fills)
+    paginated_fills = fills[offset:offset + limit]
+    
+    return {
+        'fills': paginated_fills,
+        'total': total,
+        'limit': limit,
+        'offset': offset,
+        'has_more': offset + limit < total
+    }
 
 
 @app.get("/api/backtest/results/{run_id}/rejected-orders")
-async def get_rejected_orders(run_id: str) -> Dict[str, Any]:
-    """Get rejected/denied orders for a specific backtest result with analysis."""
+async def get_rejected_orders(
+    run_id: str,
+    limit: int = 1000,
+    offset: int = 0
+) -> Dict[str, Any]:
+    """Get rejected/denied orders for a specific backtest result with analysis.
+    
+    Args:
+        run_id: Backtest run ID
+        limit: Maximum number of rejected orders to return (default: 1000, max: 10000)
+        offset: Number of rejected orders to skip (default: 0)
+    
+    Returns:
+        Dictionary with 'rejected_orders' array (paginated), 'analysis', and pagination info
+    """
+    # Cap limit to prevent excessive memory usage
+    limit = min(limit, 10000)
+    limit = max(limit, 1)  # At least 1
     # Try report results first (only report mode has order details)
     # Use same path resolution as get_report_result
     report_paths = [
@@ -833,6 +875,9 @@ async def get_rejected_orders(run_id: str) -> Dict[str, Any]:
         'common_patterns': []
     }
     
+    # Calculate analysis on ALL rejected orders (before pagination)
+    total_rejected = len(rejected_orders)
+    
     if rejected_orders:
         # Count by side
         buy_rejected = sum(1 for o in rejected_orders if o.get('side') == 'buy')
@@ -841,6 +886,7 @@ async def get_rejected_orders(run_id: str) -> Dict[str, Any]:
             'buy': buy_rejected,
             'sell': sell_rejected
         }
+        analysis['total_rejected'] = total_rejected
         
         # Analyze price ranges (if prices available)
         if rejected_orders and 'price' in rejected_orders[0]:
@@ -854,15 +900,38 @@ async def get_rejected_orders(run_id: str) -> Dict[str, Any]:
                     'avg': sum(prices) / len(prices)
                 }
     
+    # Paginate rejected orders
+    paginated_rejected = rejected_orders[offset:offset + limit]
+    
     return {
-        'rejected_orders': rejected_orders,
-        'analysis': analysis
+        'rejected_orders': paginated_rejected,
+        'analysis': analysis,
+        'total': total_rejected,
+        'limit': limit,
+        'offset': offset,
+        'has_more': offset + limit < total_rejected
     }
 
 
 @app.get("/api/backtest/results/{run_id}/report")
-async def get_report_result(run_id: str) -> Dict[str, Any]:
-    """Get full report result including timeline and orders."""
+async def get_report_result(
+    run_id: str,
+    timeline_limit: int = 5000,
+    timeline_offset: int = 0
+) -> Dict[str, Any]:
+    """Get full report result including timeline and orders.
+    
+    Args:
+        run_id: Backtest run ID
+        timeline_limit: Maximum number of timeline events to return (default: 5000, max: 50000)
+        timeline_offset: Number of timeline events to skip (default: 0)
+    
+    Returns:
+        Dictionary with report data, paginated timeline, and orders
+    """
+    # Cap limit to prevent excessive memory usage
+    timeline_limit = min(timeline_limit, 50000)
+    timeline_limit = max(timeline_limit, 1)  # At least 1
     # Try multiple possible paths for Docker compatibility
     report_paths = [
         Path(f"backend/backtest_results/report/{run_id}"),
@@ -886,15 +955,32 @@ async def get_report_result(run_id: str) -> Dict[str, Any]:
         with open(summary_file, 'r') as f:
             result = json.load(f)
     
-    # Load timeline if exists
+    # Load timeline if exists (with pagination)
     timeline_file = report_dir / "timeline.json"
     if timeline_file.exists():
         try:
-            with open(timeline_file, 'r') as f:
-                timeline_data = json.load(f)
-                result['timeline'] = timeline_data if isinstance(timeline_data, list) else []
+            loop = asyncio.get_event_loop()
+            def load_timeline():
+                with open(timeline_file, 'r') as f:
+                    return json.load(f)
+            timeline_data = await loop.run_in_executor(None, load_timeline)
+            if isinstance(timeline_data, list):
+                total_timeline = len(timeline_data)
+                # Paginate timeline
+                paginated_timeline = timeline_data[timeline_offset:timeline_offset + timeline_limit]
+                result['timeline'] = paginated_timeline
+                result['timeline_pagination'] = {
+                    'total': total_timeline,
+                    'limit': timeline_limit,
+                    'offset': timeline_offset,
+                    'has_more': timeline_offset + timeline_limit < total_timeline
+                }
+            else:
+                result['timeline'] = []
+                result['timeline_pagination'] = {'total': 0, 'limit': timeline_limit, 'offset': timeline_offset, 'has_more': False}
         except (json.JSONDecodeError, IOError, OSError):
             result['timeline'] = []
+            result['timeline_pagination'] = {'total': 0, 'limit': timeline_limit, 'offset': timeline_offset, 'has_more': False}
     
     # Load orders if exists
     orders_file = report_dir / "orders.json"

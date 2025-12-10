@@ -845,6 +845,43 @@ class BacktestEngine:
         validation_errors = []
         validation_warnings = []
         
+        # First, validate that dataset name matches the date in time window
+        # Extract date from dataset name (format: day-YYYY-MM-DD)
+        dataset_date = None
+        if dataset.startswith("day-"):
+            try:
+                date_str = dataset.replace("day-", "")
+                from datetime import datetime as dt
+                dataset_date = dt.strptime(date_str, "%Y-%m-%d").date()
+                print(f"Status: Dataset '{dataset}' corresponds to date: {dataset_date}")
+            except ValueError as e:
+                validation_warnings.append(f"WARNING: Could not parse date from dataset name '{dataset}', expected format 'day-YYYY-MM-DD': {e}")
+        else:
+            print(f"Status: Dataset '{dataset}' does not start with 'day-', skipping date validation")
+        
+        # Extract date from start time window
+        start_date = start.date() if hasattr(start, 'date') else start.date()
+        print(f"Status: Time window start date: {start_date}")
+        
+        # Check if dataset date matches time window date
+        if dataset_date is not None and dataset_date != start_date:
+            print(f"Status: ✗ Date mismatch detected: dataset date {dataset_date} != start date {start_date}")
+            error_msg = (
+                f"ERROR: Dataset date mismatch\n"
+                f"  Dataset name: {dataset} (date: {dataset_date})\n"
+                f"  Requested time window start: {start} (date: {start_date})\n"
+                f"  The dataset name must match the date in the time window.\n"
+                f"  Please use dataset 'day-{start_date.strftime('%Y-%m-%d')}' for data on {start_date}.\n"
+                f"  Or change the time window to match dataset date {dataset_date}."
+            )
+            validation_errors.append(error_msg)
+            print(f"Status: ✗ VALIDATION ERROR: {error_msg}")
+        
+        # Fail fast if date mismatch - don't proceed with file discovery
+        if validation_errors:
+            error_msg = "VALIDATION FAILED:\n" + "\n".join(validation_errors)
+            raise RuntimeError(error_msg)
+        
         # Check raw data files exist
         base_path_str = os.getenv("UNIFIED_CLOUD_LOCAL_PATH") or config["environment"].get("UNIFIED_CLOUD_LOCAL_PATH", "/app/data_downloads")
         base_path = Path(base_path_str).resolve()
@@ -885,8 +922,23 @@ class BacktestEngine:
         
         # Validate trades data availability
         if snapshot_mode in ("trades", "both"):
-            if not raw_trades_paths:
-                validation_errors.append(f"ERROR: No trade data files found for pattern: {trades_path_pattern}")
+            # First check if dataset folder exists
+            dataset_folder = base_path / "raw_tick_data" / "by_date" / dataset
+            if not dataset_folder.exists():
+                validation_errors.append(
+                    f"ERROR: Dataset folder not found: {dataset_folder}\n"
+                    f"  Required for dataset: {dataset}\n"
+                    f"  Expected location: {dataset_folder}\n"
+                    f"  Please ensure the dataset folder exists before running the backtest."
+                )
+            elif not raw_trades_paths:
+                # Dataset exists but no trade files found
+                validation_errors.append(
+                    f"ERROR: No trade data files found for dataset '{dataset}'\n"
+                    f"  Dataset folder exists: {dataset_folder}\n"
+                    f"  Pattern searched: {trades_path_pattern}\n"
+                    f"  Please ensure trade data files exist in the dataset folder."
+                )
             else:
                 # Check if files exist and have data (lenient validation - actual time window checked during catalog query)
                 print(f"Status: Checking trade data file availability...")
@@ -906,17 +958,44 @@ class BacktestEngine:
                             validation_warnings.append(f"WARNING: Could not verify trade file {path.name}: {e}")
                 
                 if total_trades_found == 0:
-                    validation_errors.append(f"ERROR: No trade data files found or files are empty")
+                    validation_errors.append(
+                        f"ERROR: No trade data files found or files are empty for dataset '{dataset}'\n"
+                        f"  Dataset folder: {dataset_folder}\n"
+                        f"  Files checked: {[str(p) for p in raw_trades_paths]}\n"
+                        f"  Please ensure trade data files exist and contain data."
+                    )
                 else:
                     print(f"Status: ✓ Found {total_trades_found} trade file(s) with data (time window will be validated during catalog query)")
         
         # Validate book data availability
         if snapshot_mode in ("book", "both"):
-            if not raw_book_paths:
+            # Check if dataset folder exists first
+            dataset_folder = base_path / "raw_tick_data" / "by_date" / dataset
+            if not dataset_folder.exists():
                 if snapshot_mode == "book":
-                    validation_errors.append(f"ERROR: Book snapshot mode requested but no book data files found for pattern: {book_path_pattern}")
+                    validation_errors.append(
+                        f"ERROR: Dataset folder not found: {dataset_folder}\n"
+                        f"  Required for dataset: {dataset}\n"
+                        f"  Book snapshot mode requires the dataset folder to exist.\n"
+                        f"  Expected location: {dataset_folder}"
+                    )
                 else:
-                    validation_warnings.append(f"WARNING: Book snapshot data not found, will use trades-only mode")
+                    # "both" mode - already reported in trades validation above
+                    pass
+            elif not raw_book_paths:
+                if snapshot_mode == "book":
+                    validation_errors.append(
+                        f"ERROR: Book snapshot mode requested but no book data files found\n"
+                        f"  Dataset folder exists: {dataset_folder}\n"
+                        f"  Pattern searched: {book_path_pattern}\n"
+                        f"  Please ensure book snapshot data files exist in the dataset folder."
+                    )
+                else:
+                    validation_warnings.append(
+                        f"WARNING: Book snapshot data not found for dataset '{dataset}', will use trades-only mode\n"
+                        f"  Dataset folder: {dataset_folder}\n"
+                        f"  Pattern searched: {book_path_pattern}"
+                    )
             else:
                 print(f"Status: ✓ Found {len(raw_book_paths)} book snapshot file(s)")
         
@@ -929,6 +1008,7 @@ class BacktestEngine:
             self.catalog = ParquetDataCatalog(str(catalog_path))
         
         print(f"Status: Checking catalog at {catalog_path} for existing data...")
+        catalog_has_data = False
         try:
             existing_trades = self.catalog.query(
                 data_cls=TradeTick,
@@ -946,10 +1026,99 @@ class BacktestEngine:
                     end=end
                 )
                 print(f"Status: ✓ Found {len(all_trades)} existing trade(s) in catalog for time window")
+                catalog_has_data = True
             else:
                 print(f"Status: No existing trade data in catalog for time window, will convert from raw files")
         except Exception as e:
             print(f"Status: Catalog check failed (will proceed with conversion): {e}")
+        
+        # If catalog doesn't have data, validate that raw files contain data for the requested time window
+        if not catalog_has_data and snapshot_mode in ("trades", "both") and raw_trades_paths:
+            print(f"Status: Validating that raw files contain data for requested time window ({start} to {end})...")
+            files_with_data = []
+            files_without_data = []
+            
+            for path in raw_trades_paths:
+                if not path.exists():
+                    files_without_data.append((path, "File does not exist"))
+                    continue
+                
+                try:
+                    import pyarrow.parquet as pq
+                    import pandas as pd
+                    
+                    # Read timestamp column to check time range
+                    # Try common timestamp column names
+                    table = pq.read_table(path)
+                    df = table.to_pandas()
+                    
+                    # Find timestamp column
+                    timestamp_col = None
+                    for col in ['ts_event', 'timestamp', 'ts', 'ts_init']:
+                        if col in df.columns:
+                            timestamp_col = col
+                            break
+                    
+                    if timestamp_col is None:
+                        files_without_data.append((path, "No timestamp column found"))
+                        continue
+                    
+                    # Get timestamp range from file
+                    timestamps = df[timestamp_col]
+                    
+                    # Convert to datetime if needed (handle nanoseconds, microseconds, milliseconds)
+                    if timestamps.dtype in ['int64', 'int32']:
+                        # Assume nanoseconds if values are very large (> 1e15)
+                        if timestamps.max() > 1e15:
+                            # Nanoseconds
+                            min_ts = pd.Timestamp(timestamps.min() / 1e9, unit='s', tz='UTC')
+                            max_ts = pd.Timestamp(timestamps.max() / 1e9, unit='s', tz='UTC')
+                        elif timestamps.max() > 1e12:
+                            # Microseconds
+                            min_ts = pd.Timestamp(timestamps.min() / 1e6, unit='s', tz='UTC')
+                            max_ts = pd.Timestamp(timestamps.max() / 1e6, unit='s', tz='UTC')
+                        else:
+                            # Milliseconds
+                            min_ts = pd.Timestamp(timestamps.min() / 1e3, unit='s', tz='UTC')
+                            max_ts = pd.Timestamp(timestamps.max() / 1e3, unit='s', tz='UTC')
+                    else:
+                        # Already datetime
+                        min_ts = pd.Timestamp(timestamps.min()).tz_localize('UTC') if timestamps.min().tz is None else timestamps.min()
+                        max_ts = pd.Timestamp(timestamps.max()).tz_localize('UTC') if timestamps.max().tz is None else timestamps.max()
+                    
+                    # Check if time window overlaps with file's time range
+                    # Convert start/end to pandas Timestamp for comparison
+                    start_ts = pd.Timestamp(start).tz_localize('UTC') if start.tzinfo is None else pd.Timestamp(start)
+                    end_ts = pd.Timestamp(end).tz_localize('UTC') if end.tzinfo is None else pd.Timestamp(end)
+                    
+                    # Check overlap: file range overlaps if (file_min < request_end) and (file_max > request_start)
+                    if min_ts < end_ts and max_ts > start_ts:
+                        files_with_data.append((path, f"Contains data from {min_ts} to {max_ts}"))
+                        print(f"Status: ✓ File {path.name} contains data for requested time window (file range: {min_ts} to {max_ts})")
+                    else:
+                        files_without_data.append((path, f"File range ({min_ts} to {max_ts}) does not overlap with requested window ({start_ts} to {end_ts})"))
+                        print(f"Status: ✗ File {path.name} does NOT contain data for requested time window (file range: {min_ts} to {max_ts})")
+                        
+                except Exception as e:
+                    files_without_data.append((path, f"Error checking file: {e}"))
+                    print(f"Status: ⚠ Could not validate file {path.name}: {e}")
+            
+            # If no files contain data for the time window, raise error
+            if not files_with_data:
+                error_msg = (
+                    f"ERROR: No trade data files contain data for the requested time window\n"
+                    f"  Requested time window: {start} to {end}\n"
+                    f"  Files checked: {len(raw_trades_paths)}\n"
+                )
+                for path, reason in files_without_data:
+                    error_msg += f"    - {path.name}: {reason}\n"
+                error_msg += (
+                    f"\n  Please ensure:\n"
+                    f"    1. The dataset folder contains data for the requested date\n"
+                    f"    2. The time window falls within the data file's time range\n"
+                    f"    3. The dataset name matches the date folder (e.g., 'day-2023-05-22' for May 22 data)"
+                )
+                validation_errors.append(error_msg)
         
         # Report validation results
         if validation_errors:

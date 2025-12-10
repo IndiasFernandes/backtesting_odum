@@ -24,8 +24,25 @@ export function PnLChart({ result, timeline }: PnLChartProps) {
     }> = []
 
     let cumulativePnL = 0.0
-    const startTime = parseISO(timeline[0].ts).getTime()
-    const endTime = parseISO(timeline[timeline.length - 1].ts).getTime()
+    
+    // Use backtest time window if available, otherwise use timeline range
+    let startTime: number
+    let endTime: number
+    
+    if (result.start && result.end) {
+      try {
+        startTime = parseISO(result.start.replace(/\+00:00Z$/, 'Z').replace(/\+00:00$/, 'Z')).getTime()
+        endTime = parseISO(result.end.replace(/\+00:00Z$/, 'Z').replace(/\+00:00$/, 'Z')).getTime()
+      } catch (e) {
+        // Fallback to timeline range
+        startTime = parseISO(timeline[0].ts).getTime()
+        endTime = parseISO(timeline[timeline.length - 1].ts).getTime()
+      }
+    } else {
+      startTime = parseISO(timeline[0].ts).getTime()
+      endTime = parseISO(timeline[timeline.length - 1].ts).getTime()
+    }
+    
     const duration = endTime - startTime
 
     // Create time buckets (every 5 seconds for granularity)
@@ -54,10 +71,20 @@ export function PnLChart({ result, timeline }: PnLChartProps) {
       buckets.set(bucketIndex, estimatedPnL)
     }
 
-    // Convert buckets to data points
-    for (let i = 0; i <= Math.floor(duration / bucketSize); i++) {
+    // Convert buckets to data points - fill entire time window
+    const totalBuckets = Math.ceil(duration / bucketSize)
+    for (let i = 0; i <= totalBuckets; i++) {
       const bucketTime = startTime + (i * bucketSize)
-      const pnl = buckets.get(i) ?? (i === 0 ? 0 : dataPoints[dataPoints.length - 1]?.cumulativePnL ?? 0)
+      // Don't exceed endTime
+      if (bucketTime > endTime) break
+      
+      // Get PnL from bucket or interpolate from previous value
+      let pnl = buckets.get(i) ?? 0
+      if (pnl === 0 && i > 0) {
+        // Interpolate based on progress if no data in this bucket
+        const progress = i / totalBuckets
+        pnl = totalPnL * progress
+      }
       
       const date = new Date(bucketTime)
       const timeStr = `${String(date.getUTCHours()).padStart(2, '0')}:${String(date.getUTCMinutes()).padStart(2, '0')}:${String(date.getUTCSeconds()).padStart(2, '0')}`

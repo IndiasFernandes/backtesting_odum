@@ -4,6 +4,7 @@ import { format, parseISO } from 'date-fns'
 import { BacktestCharts } from './BacktestCharts'
 import { PnLChart } from './PnLChart'
 import { TickPriceChart } from './TickPriceChart'
+import { OHLCChart } from './OHLCChart'
 
 interface ResultDetailModalProps {
   result: BacktestResult | null
@@ -12,59 +13,142 @@ interface ResultDetailModalProps {
 
 export function ResultDetailModal({ result, onClose }: ResultDetailModalProps) {
   const [fills, setFills] = useState<Array<{ order_id?: string; id?: string; price: number; quantity?: number; amount?: number; side?: string; timestamp?: string }>>([])
+  const [fillsTotal, setFillsTotal] = useState(0)
+  const [fillsHasMore, setFillsHasMore] = useState(false)
+  const [fillsOffset, setFillsOffset] = useState(0)
   const [rejectedOrders, setRejectedOrders] = useState<{
     rejected_orders: Array<{ id: string; side: string; price: number; amount: number; status: string }>
     analysis: any
   } | null>(null)
+  const [rejectedHasMore, setRejectedHasMore] = useState(false)
+  const [rejectedOffset, setRejectedOffset] = useState(0)
   const [timeline, setTimeline] = useState<Array<{ ts: string; event: string; data: any }>>([])
-  const [tickData, setTickData] = useState<Array<any>>([])
+  const [timelineTotal, setTimelineTotal] = useState(0)
+  const [timelineHasMore, setTimelineHasMore] = useState(false)
+  const [timelineOffset, setTimelineOffset] = useState(0)
+  const [tickData] = useState<Array<any>>([])
   const [loadingFills, setLoadingFills] = useState(false)
   const [loadingRejected, setLoadingRejected] = useState(false)
   const [loadingTimeline, setLoadingTimeline] = useState(false)
-  const [loadingTicks, setLoadingTicks] = useState(false)
+  
+  // Pagination constants
+  // For charts: Load enough data to cover full time window (but limit points for performance)
+  // For tables: Use smaller pages for better UX
+  const FILLS_PAGE_SIZE = 1000
+  const REJECTED_PAGE_SIZE = 1000
+  const TIMELINE_PAGE_SIZE = 50000 // Increased for charts to cover full period
 
   useEffect(() => {
     if (result && result.mode === 'report') {
-      // Load fills, rejected orders, and timeline for report mode
+      // Reset pagination state
+      setFillsOffset(0)
+      setRejectedOffset(0)
+      setTimelineOffset(0)
+      
+      // Load initial chunks of data (paginated)
       setLoadingFills(true)
       setLoadingRejected(true)
       setLoadingTimeline(true)
       
-      backtestApi.getFills(result.run_id)
-        .then(setFills)
+      // Load first page of fills
+      backtestApi.getFills(result.run_id, FILLS_PAGE_SIZE, 0)
+        .then((response) => {
+          setFills(response.fills)
+          setFillsTotal(response.total)
+          setFillsHasMore(response.has_more)
+        })
         .catch(console.error)
         .finally(() => setLoadingFills(false))
       
-      backtestApi.getRejectedOrders(result.run_id)
-        .then(setRejectedOrders)
+      // Load first page of rejected orders
+      backtestApi.getRejectedOrders(result.run_id, REJECTED_PAGE_SIZE, 0)
+        .then((response) => {
+          setRejectedOrders({
+            rejected_orders: response.rejected_orders,
+            analysis: response.analysis
+          })
+          setRejectedHasMore(response.has_more)
+        })
         .catch(console.error)
         .finally(() => setLoadingRejected(false))
       
-      // Load full report result to get timeline
-      backtestApi.getReportResult(result.run_id)
+      // Load first page of timeline
+      backtestApi.getReportResult(result.run_id, TIMELINE_PAGE_SIZE, 0)
         .then((fullResult) => {
           if (fullResult.timeline) {
             setTimeline(fullResult.timeline)
+            if (fullResult.timeline_pagination) {
+              setTimelineTotal(fullResult.timeline_pagination.total)
+              setTimelineHasMore(fullResult.timeline_pagination.has_more)
+            }
           }
         })
         .catch(console.error)
         .finally(() => setLoadingTimeline(false))
       
-      // Load tick data if available
-      setLoadingTicks(true)
-      backtestApi.getTickData(result.run_id)
-        .then((ticks) => {
-          if (Array.isArray(ticks)) {
-            setTickData(ticks)
-          }
-        })
-        .catch((err) => {
-          console.error('Failed to load tick data:', err)
-          // Tick data might not be available for all backtests
-        })
-        .finally(() => setLoadingTicks(false))
+      // Skip tick data for now - it can be very large and cause performance issues
+      // Users can download it if needed
     }
   }, [result])
+  
+  // Load more functions
+  const loadMoreFills = async () => {
+    if (loadingFills || !fillsHasMore) return
+    setLoadingFills(true)
+    const newOffset = fillsOffset + FILLS_PAGE_SIZE
+    try {
+      const response = await backtestApi.getFills(result!.run_id, FILLS_PAGE_SIZE, newOffset)
+      setFills(prev => [...prev, ...response.fills])
+      setFillsHasMore(response.has_more)
+      setFillsOffset(newOffset)
+    } catch (err) {
+      console.error('Failed to load more fills:', err)
+    } finally {
+      setLoadingFills(false)
+    }
+  }
+  
+  const loadMoreRejected = async () => {
+    if (loadingRejected || !rejectedHasMore) return
+    setLoadingRejected(true)
+    const newOffset = rejectedOffset + REJECTED_PAGE_SIZE
+    try {
+      const response = await backtestApi.getRejectedOrders(result!.run_id, REJECTED_PAGE_SIZE, newOffset)
+      setRejectedOrders(prev => prev ? {
+        ...prev,
+        rejected_orders: [...prev.rejected_orders, ...response.rejected_orders]
+      } : {
+        rejected_orders: response.rejected_orders,
+        analysis: response.analysis
+      })
+      setRejectedHasMore(response.has_more)
+      setRejectedOffset(newOffset)
+    } catch (err) {
+      console.error('Failed to load more rejected orders:', err)
+    } finally {
+      setLoadingRejected(false)
+    }
+  }
+  
+  const loadMoreTimeline = async () => {
+    if (loadingTimeline || !timelineHasMore) return
+    setLoadingTimeline(true)
+    const newOffset = timelineOffset + TIMELINE_PAGE_SIZE
+    try {
+      const response = await backtestApi.getReportResult(result!.run_id, TIMELINE_PAGE_SIZE, newOffset)
+      if (response.timeline) {
+        setTimeline(prev => [...prev, ...response.timeline])
+        if (response.timeline_pagination) {
+          setTimelineHasMore(response.timeline_pagination.has_more)
+        }
+      }
+      setTimelineOffset(newOffset)
+    } catch (err) {
+      console.error('Failed to load more timeline:', err)
+    } finally {
+      setLoadingTimeline(false)
+    }
+  }
 
   if (!result) return null
 
@@ -263,12 +347,34 @@ export function ResultDetailModal({ result, onClose }: ResultDetailModalProps) {
           )}
 
           {/* Performance Charts */}
+          {/* Average Fill Price Chart - Shows full backtest period */}
           {result.mode === 'report' && timeline.length > 0 && (
             <div className="bg-dark-bg border border-dark-border rounded-lg p-4">
-              {loadingTimeline ? (
+              {loadingTimeline && timeline.length === 0 ? (
                 <div className="text-gray-400">Loading charts...</div>
               ) : (
                 <BacktestCharts result={result} timeline={timeline} />
+              )}
+            </div>
+          )}
+
+          {/* OHLC Chart - Shows full backtest period, trades optional */}
+          {result.mode === 'report' && (
+            <div className="bg-dark-bg border border-dark-border rounded-lg p-4">
+              {loadingFills && fills.length === 0 ? (
+                <div className="text-gray-400">Loading OHLC chart...</div>
+              ) : (
+                <>
+                  <OHLCChart 
+                    tickData={tickData.length > 0 ? tickData : undefined}
+                    timeline={timeline.length > 0 ? timeline : undefined}
+                    startTime={result.start}
+                    endTime={result.end}
+                  />
+                  <div className="mt-2 text-xs text-gray-500 text-center">
+                    Showing full backtest period: {result.start ? new Date(result.start).toISOString().substring(0, 19) + 'Z' : 'N/A'} to {result.end ? new Date(result.end).toISOString().substring(0, 19) + 'Z' : 'N/A'}
+                  </div>
+                </>
               )}
             </div>
           )}
@@ -287,7 +393,7 @@ export function ResultDetailModal({ result, onClose }: ResultDetailModalProps) {
           {/* Tick Price Chart with Filled Orders */}
           {result.mode === 'report' && tickData.length > 0 && fills.length > 0 && (
             <div className="bg-dark-bg border border-dark-border rounded-lg p-4">
-              {loadingTicks || loadingFills ? (
+              {loadingFills ? (
                 <div className="text-gray-400">Loading tick chart...</div>
               ) : (
                 <TickPriceChart tickData={tickData} fills={fills} />
@@ -342,12 +448,13 @@ export function ResultDetailModal({ result, onClose }: ResultDetailModalProps) {
             <>
               <div className="bg-dark-bg border border-dark-border rounded-lg p-4">
                 <h3 className="text-lg font-semibold text-white mb-4">Fills</h3>
-                {loadingFills ? (
+                {loadingFills && fills.length === 0 ? (
                   <div className="text-gray-400">Loading fills...</div>
                 ) : fills.length > 0 ? (
                   <div className="space-y-2">
                     <div className="text-sm text-gray-400 mb-2">
-                      Total Fills: <span className="text-white font-medium">{fills.length}</span>
+                      Showing {fills.length} of {fillsTotal} fills
+                      {fillsHasMore && <span className="text-yellow-400 ml-2">(More available)</span>}
                     </div>
                     <div className="max-h-64 overflow-y-auto">
                       <table className="min-w-full text-xs">
@@ -360,7 +467,7 @@ export function ResultDetailModal({ result, onClose }: ResultDetailModalProps) {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-dark-border">
-                          {fills.slice(0, 100).map((fill, idx) => {
+                          {fills.map((fill, idx) => {
                             const fillTime = fill.timestamp ? (() => {
                               try {
                                 return format(parseISO(fill.timestamp), 'HH:mm:ss.SSS')
@@ -371,20 +478,26 @@ export function ResultDetailModal({ result, onClose }: ResultDetailModalProps) {
                             return (
                               <tr key={idx}>
                                 <td className="px-3 py-2 text-gray-400 font-mono text-xs">{fillTime}</td>
-                                <td className="px-3 py-2 text-gray-300 font-mono text-xs">{fill.order_id}</td>
+                                <td className="px-3 py-2 text-gray-300 font-mono text-xs">{fill.order_id || fill.id}</td>
                                 <td className="px-3 py-2 text-white">{fill.price.toFixed(2)}</td>
-                                <td className="px-3 py-2 text-white">{fill.quantity.toFixed(6)}</td>
+                                <td className="px-3 py-2 text-white">{(fill.quantity || fill.amount || 0).toFixed(6)}</td>
                               </tr>
                             )
                           })}
                         </tbody>
                       </table>
-                      {fills.length > 100 && (
-                        <div className="mt-2 text-xs text-gray-500">
-                          Showing first 100 of {fills.length} fills
-                        </div>
-                      )}
                     </div>
+                    {fillsHasMore && (
+                      <div className="mt-4 flex justify-center">
+                        <button
+                          onClick={loadMoreFills}
+                          disabled={loadingFills}
+                          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg text-sm transition-colors"
+                        >
+                          {loadingFills ? 'Loading...' : `Load More Fills (${fillsTotal - fills.length} remaining)`}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="text-gray-400">No fills data available</div>
@@ -427,7 +540,8 @@ export function ResultDetailModal({ result, onClose }: ResultDetailModalProps) {
                     {rejectedOrders.rejected_orders.length > 0 ? (
                       <div className="mt-4">
                         <div className="text-sm text-gray-400 mb-2">
-                          Sample Rejected Orders (showing first 50):
+                          Showing {rejectedOrders.rejected_orders.length} rejected orders
+                          {rejectedHasMore && <span className="text-yellow-400 ml-2">(More available - click Load More)</span>}
                         </div>
                         <div className="max-h-64 overflow-y-auto">
                           <table className="min-w-full text-xs">
@@ -442,7 +556,7 @@ export function ResultDetailModal({ result, onClose }: ResultDetailModalProps) {
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-dark-border">
-                              {rejectedOrders.rejected_orders.slice(0, 50).map((order) => {
+                              {rejectedOrders.rejected_orders.map((order) => {
                                 const orderTime = order.timestamp ? (() => {
                                   try {
                                     return format(parseISO(order.timestamp), 'HH:mm:ss.SSS')
@@ -468,9 +582,15 @@ export function ResultDetailModal({ result, onClose }: ResultDetailModalProps) {
                             </tbody>
                           </table>
                         </div>
-                        {rejectedOrders.rejected_orders.length > 50 && (
-                          <div className="mt-2 text-xs text-gray-500">
-                            Showing first 50 of {rejectedOrders.rejected_orders.length} rejected orders
+                        {rejectedHasMore && (
+                          <div className="mt-4 flex justify-center">
+                            <button
+                              onClick={loadMoreRejected}
+                              disabled={loadingRejected}
+                              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg text-sm transition-colors"
+                            >
+                              {loadingRejected ? 'Loading...' : `Load More Rejected Orders`}
+                            </button>
                           </div>
                         )}
                         <div className="mt-4 text-xs text-gray-400">

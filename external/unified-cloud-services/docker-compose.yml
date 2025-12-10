@@ -1,0 +1,95 @@
+# Docker Compose for unified-cloud-services with GCS FUSE
+#
+# Usage:
+#   # Start with default settings
+#   docker compose up -d
+#
+#   # Start with specific bucket
+#   GCS_BUCKET=market-data-tick-central-element-323112 docker compose up -d
+#
+#   # Run a Python command
+#   docker compose run --rm app python -c "from unified_cloud_services import UnifiedCloudService; print('OK')"
+#
+#   # Access shell
+#   docker compose run --rm app bash
+#
+# For GCS FUSE mounting, you need to:
+#   1. Have gcloud credentials (either service account or user auth)
+#   2. Run with --privileged or mount /dev/fuse
+#
+# Environment variables:
+#   - GCS_BUCKET: Bucket to mount (default: market-data-tick-central-element-323112)
+#   - GOOGLE_APPLICATION_CREDENTIALS: Path to service account JSON (optional)
+#   - GCP_PROJECT_ID: GCP project ID (default: central-element-323112)
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    
+    # Required for FUSE mounting
+    privileged: true
+    devices:
+      - /dev/fuse
+    cap_add:
+      - SYS_ADMIN
+    
+    environment:
+      - GCS_FUSE_MOUNT_PATH=/mnt/gcs
+      - GCP_PROJECT_ID=${GCP_PROJECT_ID:-central-element-323112}
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
+      - GCS_BUCKET=${GCS_BUCKET:-market-data-tick-central-element-323112}
+    
+    volumes:
+      # Mount local code for development
+      - .:/app
+      # Mount GCP credentials directory (if exists)
+      - ${HOME}/.config/gcloud:/root/.config/gcloud:ro
+      # Persist pip cache for faster rebuilds
+      - pip-cache:/root/.cache/pip
+    
+    # Keep container running for development
+    stdin_open: true
+    tty: true
+    
+    # Default command shows GCS FUSE status
+    command: >
+      bash -c "
+        echo '=== GCS FUSE Setup ===' &&
+        if [ -n \"$${GCS_BUCKET}\" ]; then
+          mkdir -p /mnt/gcs/$${GCS_BUCKET} &&
+          gcsfuse --implicit-dirs $${GCS_BUCKET} /mnt/gcs/$${GCS_BUCKET} &&
+          echo 'Mounted $${GCS_BUCKET} at /mnt/gcs/$${GCS_BUCKET}'
+        fi &&
+        python -c 'from unified_cloud_services.core.gcsfuse_helper import GCSFuseHelper; GCSFuseHelper().print_status()' &&
+        tail -f /dev/null
+      "
+
+  # One-off runner for scripts
+  runner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    
+    privileged: true
+    devices:
+      - /dev/fuse
+    
+    environment:
+      - GCS_FUSE_MOUNT_PATH=/mnt/gcs
+      - GCP_PROJECT_ID=${GCP_PROJECT_ID:-central-element-323112}
+      - GCS_BUCKET=${GCS_BUCKET:-market-data-tick-central-element-323112}
+    
+    volumes:
+      - .:/app
+      - ${HOME}/.config/gcloud:/root/.config/gcloud:ro
+    
+    profiles:
+      - runner
+    
+    command: ["python", "-c", "print('Runner ready')"]
+
+volumes:
+  pip-cache:
+

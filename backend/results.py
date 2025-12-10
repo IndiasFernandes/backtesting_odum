@@ -87,17 +87,15 @@ class ResultSerializer:
             Serialized result dictionary
         """
         # Format dates properly - if timezone-aware, use UTC format; otherwise add Z
-        start_str = start.isoformat()
-        end_str = end.isoformat()
-        if start.tzinfo:
-            # Already has timezone info, just ensure it ends with Z
-            start_str = start_str.replace('+00:00', 'Z').replace('-00:00', 'Z')
-        else:
-            start_str = start_str + "Z"
-        if end.tzinfo:
-            end_str = end_str.replace('+00:00', 'Z').replace('-00:00', 'Z')
-        else:
-            end_str = end_str + "Z"
+        def format_date(dt: datetime) -> str:
+            if dt.tzinfo:
+                # Already has timezone info, replace +00:00 with Z
+                return dt.isoformat().replace('+00:00', 'Z').replace('-00:00', 'Z')
+            else:
+                return dt.isoformat() + "Z"
+        
+        start_str = format_date(start)
+        end_str = format_date(end)
         
         # Add execution time (when backtest was run)
         execution_time = datetime.now(timezone.utc)

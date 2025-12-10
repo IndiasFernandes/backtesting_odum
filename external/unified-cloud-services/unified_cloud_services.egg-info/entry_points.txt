@@ -1,0 +1,5 @@
+[console_scripts]
+ucs-mount = unified_cloud_services.cli:mount_bucket
+ucs-setup = unified_cloud_services.cli:setup_gcsfuse
+ucs-status = unified_cloud_services.cli:print_status
+ucs-unmount = unified_cloud_services.cli:unmount_bucket

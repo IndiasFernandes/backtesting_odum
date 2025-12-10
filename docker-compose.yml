@@ -5,6 +5,11 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+      args:
+        # GitHub token for private repo access (optional)
+        # Set via: GITHUB_TOKEN=your_token docker-compose build
+        GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+        GITHUB_USER: ${GITHUB_USER:-IggyIkenna}
     container_name: nautilus-backend
     ports:
       - "8000:8000"
@@ -16,14 +21,15 @@ services:
       - ./backend/backtest_results:/app/backend/backtest_results
       - ./external/data_downloads/configs:/app/external/data_downloads/configs:ro
       - ./frontend/public/tickdata:/app/frontend/public/tickdata
-      # Optional: mount service account key file for GCS authentication
-      # Uncomment and set path if using file-based authentication:
-      # - ./gcs-key.json:/app/gcs-key.json:ro
+      # Mount secrets directory for GCS authentication
+      - ./.secrets:/app/.secrets:ro
     environment:
       - UNIFIED_CLOUD_LOCAL_PATH=/app/data_downloads
       - UNIFIED_CLOUD_SERVICES_USE_PARQUET=true
       - UNIFIED_CLOUD_SERVICES_USE_DIRECT_GCS=false
       - DATA_CATALOG_PATH=/app/backend/data/parquet
+      # GCS credentials (defaults to .secrets/gcs/gcs-service-account.json)
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-/app/.secrets/gcs/gcs-service-account.json}
       # GCS FUSE configuration (optional)
       - USE_GCS_FUSE=${USE_GCS_FUSE:-false}
       - GCS_FUSE_BUCKET=${GCS_FUSE_BUCKET:-}

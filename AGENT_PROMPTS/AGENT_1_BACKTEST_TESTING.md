@@ -22,9 +22,16 @@ Comprehensively test backtest execution, verify trade execution accuracy, and va
 
 ### 1. Fast Mode Testing
 
+**Status**: ✅ Working
+
+**Bug Found & Fixed**:
+- ❌ `format_date` function not defined in `serialize_fast()` method (line 112 in `results.py`)
+- ✅ Fixed: Added `format_date` helper function to `serialize_fast()` method
+- ✅ Verified: Fast mode now works correctly
+
 **Via API:**
-- Execute backtest in fast mode via API
-- Verify response structure matches spec:
+- ✅ Execute backtest in fast mode via API
+- ✅ Verify response structure matches spec:
   ```json
   {
     "run_id": "string",
@@ -300,4 +307,32 @@ docker-compose exec backend python backend/run_backtest.py \
 3. Performance benchmarks
 4. Bug reports (if any) with reproduction steps
 5. Recommendations for improvements
+
+## Bugs Found & Fixed
+
+### Bug 1: `format_date` not defined in `serialize_fast()`
+- **File**: `backend/results.py`
+- **Line**: 112
+- **Issue**: `format_date()` function called but not defined in `serialize_fast()` method scope
+- **Fix**: Added `format_date` helper function definition inside `serialize_fast()` method (same pattern as `serialize_report()`)
+- **Status**: ✅ Fixed in code, ⚠️ Backend restart needed
+
+### Bug 2: Missing `git` in Dockerfile
+- **File**: `backend/Dockerfile`
+- **Issue**: `git` package not installed, causing build failure when installing `git+https://github.com/IggyIkenna/unified-cloud-services.git`
+- **Fix**: Added `git` to apt-get install list
+- **Status**: ✅ Fixed in Dockerfile
+- **Note**: Docker build still blocked by private GitHub repo authentication (separate issue)
+
+## Known Issues
+
+### Docker Build: Private GitHub Repo Authentication
+- **Issue**: `unified-cloud-services` repository requires authentication
+- **Error**: `fatal: could not read Username for 'https://github.com': No such device or address`
+- **Solutions**:
+  1. Use SSH URL instead of HTTPS (requires SSH keys in Docker)
+  2. Use GitHub token in URL: `git+https://<token>@github.com/...`
+  3. Copy package locally instead of cloning from git
+  4. Use Docker build secrets for credentials
+- **Status**: ⚠️ Needs resolution for Docker builds
 

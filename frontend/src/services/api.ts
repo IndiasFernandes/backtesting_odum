@@ -147,8 +147,24 @@ export const backtestApi = {
     return response.data
   },
 
-  getReportResult: async (runId: string): Promise<BacktestResult> => {
-    const response = await api.get<BacktestResult>(`/api/backtest/results/${runId}/report`)
+  getReportResult: async (runId: string, timelineLimit: number = 5000, timelineOffset: number = 0): Promise<BacktestResult & {
+    timeline_pagination?: {
+      total: number
+      limit: number
+      offset: number
+      has_more: boolean
+    }
+  }> => {
+    const response = await api.get<BacktestResult & {
+      timeline_pagination?: {
+        total: number
+        limit: number
+        offset: number
+        has_more: boolean
+      }
+    }>(`/api/backtest/results/${runId}/report`, {
+      params: { timeline_limit: timelineLimit, timeline_offset: timelineOffset }
+    })
     return response.data
   },
 
@@ -157,20 +173,40 @@ export const backtestApi = {
     return response.data
   },
 
-  getFills: async (runId: string): Promise<Array<{ order_id: string; price: number; quantity: number; timestamp: string }>> => {
-    const response = await api.get<Array<{ order_id: string; price: number; quantity: number; timestamp: string }>>(`/api/backtest/results/${runId}/fills`)
+  getFills: async (runId: string, limit: number = 1000, offset: number = 0): Promise<{
+    fills: Array<{ order_id?: string; id?: string; price: number; quantity?: number; amount?: number; timestamp?: string }>
+    total: number
+    limit: number
+    offset: number
+    has_more: boolean
+  }> => {
+    const response = await api.get<{
+      fills: Array<{ order_id?: string; id?: string; price: number; quantity?: number; amount?: number; timestamp?: string }>
+      total: number
+      limit: number
+      offset: number
+      has_more: boolean
+    }>(`/api/backtest/results/${runId}/fills`, {
+      params: { limit, offset }
+    })
     return response.data
   },
 
-  getRejectedOrders: async (runId: string): Promise<{
+  getRejectedOrders: async (runId: string, limit: number = 1000, offset: number = 0): Promise<{
     rejected_orders: Array<{ id: string; side: string; price: number; amount: number; status: string; timestamp?: string }>
     analysis: {
       total_rejected: number
       by_side: { buy: number; sell: number }
       price_range?: { min: number; max: number; avg: number }
     }
+    total: number
+    limit: number
+    offset: number
+    has_more: boolean
   }> => {
-    const response = await api.get(`/api/backtest/results/${runId}/rejected-orders`)
+    const response = await api.get(`/api/backtest/results/${runId}/rejected-orders`, {
+      params: { limit, offset }
+    })
     return response.data
   },
 
