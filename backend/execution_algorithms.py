@@ -109,13 +109,13 @@ class TWAPExecAlgorithm(ExecAlgorithm):
         """Helper to spawn TWAP child order."""
         if order.is_limit_order() and order.price:
             self.spawn_limit(
-                primary_order=order,
+                primary=order,
                 quantity=quantity,
                 price=order.price,
             )
         else:
             self.spawn_market(
-                primary_order=order,
+                primary=order,
                 quantity=quantity,
             )
 
@@ -198,13 +198,13 @@ class VWAPExecAlgorithm(ExecAlgorithm):
         """Helper to spawn VWAP child order."""
         if order.is_limit_order() and order.price:
             self.spawn_limit(
-                primary_order=order,
+                primary=order,
                 quantity=quantity,
                 price=order.price,
             )
         else:
             self.spawn_market(
-                primary_order=order,
+                primary=order,
                 quantity=quantity,
             )
 
@@ -260,13 +260,13 @@ class IcebergExecAlgorithm(ExecAlgorithm):
         # Spawn first visible order immediately
         if order.is_limit_order() and order.price:
             self.spawn_limit(
-                primary_order=order,
+                primary=order,
                 quantity=visible_qty,
                 price=order.price,
             )
         else:
             self.spawn_market(
-                primary_order=order,
+                primary=order,
                 quantity=visible_qty,
             )
     
@@ -316,13 +316,13 @@ class IcebergExecAlgorithm(ExecAlgorithm):
                         
                         if primary_order.is_limit_order() and primary_order.price:
                             self.spawn_limit(
-                                primary_order=primary_order,
+                                primary=primary_order,
                                 quantity=next_visible_qty,
                                 price=primary_order.price,
                             )
                         else:
                             self.spawn_market(
-                                primary_order=primary_order,
+                                primary=primary_order,
                                 quantity=next_visible_qty,
                             )
                 else:

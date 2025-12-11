@@ -289,8 +289,8 @@ export default function BacktestRunnerPage() {
     let configPath = ''
     if (formData.config) {
       configPath = formData.config.startsWith('external/') 
-        ? formData.config 
-        : `external/data_downloads/configs/${formData.config}`
+      ? formData.config 
+      : `external/data_downloads/configs/${formData.config}`
     }
     
     const flags = [

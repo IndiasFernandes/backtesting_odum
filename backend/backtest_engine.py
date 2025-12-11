@@ -375,18 +375,18 @@ class BacktestEngine:
             
             # Check if data already exists in catalog
             try:
-                existing_check = self.catalog.query(
-                    data_cls=TradeTick,
-                    instrument_ids=[instrument],
+                            existing_check = self.catalog.query(
+                                data_cls=TradeTick,
+                                instrument_ids=[instrument],
                     start=start,
                     end=end,
-                    limit=1
-                )
-                if existing_check:
+                                limit=1
+                            )
+                            if existing_check:
                     print(f"✅ Trades data already exists in catalog for time window")
                     total_trades_count = 1  # Mark as existing
-            except Exception:
-                pass  # No data exists, proceed with conversion
+                        except Exception:
+                            pass  # No data exists, proceed with conversion
                         
             # Load and convert data if not in catalog
             if total_trades_count == 0:
@@ -453,20 +453,20 @@ class BacktestEngine:
                             try:
                                 print(f"📂 Converting and registering trades from {raw_trades_path.name}...")
                                 print(f"   File size: {raw_trades_path.stat().st_size / (1024*1024):.2f} MB")
-                                trades_count = DataConverter.convert_trades_parquet_to_catalog(
-                                    raw_trades_path,
-                                    instrument,
-                                    self.catalog,
-                                    price_precision=price_precision,
-                                    size_precision=size_precision,
+                        trades_count = DataConverter.convert_trades_parquet_to_catalog(
+                            raw_trades_path,
+                            instrument,
+                            self.catalog,
+                            price_precision=price_precision,
+                            size_precision=size_precision,
                                     skip_if_exists=True
-                                )
-                                total_trades_count += trades_count
+                        )
+                        total_trades_count += trades_count
                                 print(f"✅ Registered {trades_count} trades from {raw_trades_path.name} to catalog")
-                            except Exception as e:
-                                import traceback
+                    except Exception as e:
+                        import traceback
                                 print(f"❌ Error converting/registering trades from {raw_trades_path}: {e}")
-                                traceback.print_exc()
+                        traceback.print_exc()
             
             if total_trades_count > 0:
                 print(f"Total registered: {total_trades_count} trades from {len(raw_trades_paths)} file(s)")
@@ -935,8 +935,8 @@ class BacktestEngine:
                                     try:
                                         # Get last trade price for calculation
                                         last_trade = engine.cache.trade_tick(instrument_id)
-                                        if last_trade and hasattr(pos, 'unrealized_pnl'):
-                                            unrealized = float(pos.unrealized_pnl(last_trade.price).as_decimal())
+                                if last_trade and hasattr(pos, 'unrealized_pnl'):
+                                    unrealized = float(pos.unrealized_pnl(last_trade.price).as_decimal())
                                     except Exception:
                                         pass
                                 qty = float(pos.quantity.as_decimal()) if pos.quantity else 0.0
@@ -1254,7 +1254,7 @@ class BacktestEngine:
         
         # Ensure base_path_str is set (for both GCS and local paths)
         if 'base_path_str' not in locals():
-            base_path_str = os.getenv("UNIFIED_CLOUD_LOCAL_PATH") or config["environment"].get("UNIFIED_CLOUD_LOCAL_PATH", "/app/data_downloads")
+        base_path_str = os.getenv("UNIFIED_CLOUD_LOCAL_PATH") or config["environment"].get("UNIFIED_CLOUD_LOCAL_PATH", "/app/data_downloads")
         base_path = Path(base_path_str).resolve()
         data_catalog_config = config.get("data_catalog", {})
         trades_path_pattern = data_catalog_config.get("trades_path")
@@ -1322,14 +1322,14 @@ class BacktestEngine:
                         )
                 else:
                     # Local file validation
-                    dataset_folder = base_path / "raw_tick_data" / "by_date" / dataset
-                    if not dataset_folder.exists():
-                        validation_errors.append(
-                            f"ERROR: Dataset folder not found: {dataset_folder}\n"
-                            f"  Required for dataset: {dataset}\n"
-                            f"  Expected location: {dataset_folder}\n"
-                            f"  Please ensure the dataset folder exists before running the backtest."
-                        )
+            dataset_folder = base_path / "raw_tick_data" / "by_date" / dataset
+            if not dataset_folder.exists():
+                validation_errors.append(
+                    f"ERROR: Dataset folder not found: {dataset_folder}\n"
+                    f"  Required for dataset: {dataset}\n"
+                    f"  Expected location: {dataset_folder}\n"
+                    f"  Please ensure the dataset folder exists before running the backtest."
+                )
             elif not raw_trades_paths:
                 # Dataset exists but no trade files found
                 validation_errors.append(
@@ -1405,15 +1405,15 @@ class BacktestEngine:
                             validation_warnings.append(f"WARNING: Could not validate GCS book snapshot data: {e}")
                 else:
                     # Local file validation
-                    dataset_folder = base_path / "raw_tick_data" / "by_date" / dataset
-                    if not dataset_folder.exists():
-                        if snapshot_mode == "book":
-                            validation_errors.append(
-                                f"ERROR: Dataset folder not found: {dataset_folder}\n"
-                                f"  Required for dataset: {dataset}\n"
-                                f"  Book snapshot mode requires the dataset folder to exist.\n"
-                                f"  Expected location: {dataset_folder}"
-                            )
+            dataset_folder = base_path / "raw_tick_data" / "by_date" / dataset
+            if not dataset_folder.exists():
+                if snapshot_mode == "book":
+                    validation_errors.append(
+                        f"ERROR: Dataset folder not found: {dataset_folder}\n"
+                        f"  Required for dataset: {dataset}\n"
+                        f"  Book snapshot mode requires the dataset folder to exist.\n"
+                        f"  Expected location: {dataset_folder}"
+                    )
                         # else: "both" mode - already reported in trades validation above
             elif not raw_book_paths:
                 if snapshot_mode == "book":
@@ -1618,7 +1618,7 @@ class BacktestEngine:
         # Create BacktestRunConfig
         print("Status: Starting backtest execution...")
         engine_config = BacktestEngineConfig(
-            strategies=[strategy_config],
+                strategies=[strategy_config],
         )
         
         # Create run config - try to pass exec_algorithms if supported
