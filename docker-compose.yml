@@ -69,6 +69,8 @@ services:
       - ./external/data_downloads/configs:/app/external/data_downloads/configs:ro
     environment:
       - VITE_API_URL=http://localhost:8000  # Use localhost for browser access
+      - DOCKER=true  # Flag to indicate running in Docker
+      - BACKEND_PROXY_URL=http://backend:8000  # Backend service name for proxy
     networks:
       - backtest-network
     depends_on:

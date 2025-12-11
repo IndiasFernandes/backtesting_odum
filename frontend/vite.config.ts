@@ -18,13 +18,18 @@ export default defineConfig({
     },
     proxy: {
       '/api': {
-        // For local development: proxy to localhost:8000
-        // For Docker: use BACKEND_PROXY_URL env var to override (defaults to backend:8000)
-        // VITE_API_URL is for browser-side code, not for proxy config
-        target: process.env.BACKEND_PROXY_URL || 
-                (process.env.DOCKER === 'true' ? 'http://backend:8000' : 'http://localhost:8000'),
+        // For Docker: use backend service name (when BACKEND_PROXY_URL is set or in Docker)
+        // For local development: use 127.0.0.1:8000 (IPv4, not localhost to avoid IPv6 issues)
+        // Can override with BACKEND_PROXY_URL env var
+        target: process.env.BACKEND_PROXY_URL || 'http://backend:8000',
         changeOrigin: true,
         secure: false,
+        // Additional configuration to handle errors
+        configure: (proxy, _options) => {
+          proxy.on('error', (err, req, res) => {
+            console.error('Proxy error:', err.message);
+          });
+        },
       },
     },
   },
