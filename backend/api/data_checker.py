@@ -170,9 +170,9 @@ class DataAvailabilityChecker:
             return False
         
         try:
-            # Use direct GCS client check (more reliable than list_available_dates)
+            # Use unified-cloud-services instead of direct google.cloud.storage
             import sys
-            from google.cloud import storage
+            from unified_cloud_services.domain.standardized_service import StandardizedDomainCloudService
             
             bucket_name = self.ucs_loader.bucket_name
             if not bucket_name:
@@ -181,8 +181,11 @@ class DataAvailabilityChecker:
             
             print(f"🔍 check_gcs_file_exists: bucket={bucket_name}, date={date_str}, instrument={instrument_id}, data_type={data_type}", file=sys.stderr, flush=True)
             
-            client = storage.Client()
-            bucket = client.bucket(bucket_name)
+            # Create standardized service for market_data domain
+            standardized_service = StandardizedDomainCloudService(
+                domain="market_data",
+                cloud_target=self.ucs_loader.target
+            )
             
             # Try multiple instrument ID formats (with and without @ suffix)
             instrument_ids_to_try = [
@@ -202,9 +205,8 @@ class DataAvailabilityChecker:
                 # Build GCS path (raw format, matching working download script)
                 gcs_path = f"raw_tick_data/by_date/day-{date_str}/data_type-{gcs_data_type}/{inst_id}.parquet"
                 
-                # Check if file exists
-                blob = bucket.blob(gcs_path)
-                exists = blob.exists()
+                # Check if file exists using UCS
+                exists = standardized_service.check_gcs_path_exists(gcs_path)
                 
                 # Debug logging
                 print(f"🔍 Checking GCS: {gcs_path}", file=sys.stderr, flush=True)
