@@ -2,6 +2,10 @@
 Smart Order Router for multi-venue order routing.
 
 Routes orders to optimal venues based on fees, liquidity, latency, and historical performance.
+
+TODO: This module is planned for future use in live execution.
+Currently not imported or used in the backtesting system.
+See docs/live/ARCHITECTURE.md for planned integration.
 """
 from typing import List, Dict, Optional
 from decimal import Decimal

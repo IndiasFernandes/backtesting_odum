@@ -1,10 +1,7 @@
 # Backtesting System - Current State
 
 > **Source of Truth (SSOT)** for the current backtesting system architecture and implementation.
-
-This document consolidates:
-- `ARCHITECTURE.md` - System architecture overview
-- `BACKTEST_SPEC.md` - Complete CLI reference, JSON schema, and specification
+> 
 
 **See also:**
 - `docs/backtesting/COMPLETION_ROADMAP.md` - What's needed to finish CeFi + TradFi
@@ -93,11 +90,15 @@ This document consolidates:
 2) **Initialize Catalog**: Create `ParquetDataCatalog` at `DATA_CATALOG_PATH` (default: `backend/data/parquet/`).
 3) **Register Instrument**: Create and register instrument definition (CryptoPerpetual) in catalog from config.
 4) **Automatic Data Conversion & Registration** (CRITICAL STEP):
-   - **PRIMARY**: Load raw Parquet files from GCS via UCS (`UCSDataLoader.download_from_gcs()` or `download_from_gcs_streaming()`)
-   - **FALLBACK**: If FUSE mounted, check local `data_downloads/` path
+   - **Data Source Selection**: Determined by `--data_source` CLI flag (default: `"gcs"`):
+     - `"gcs"` (default): Uses UCS to load from GCS bucket (PRIMARY)
+     - `"local"`: Uses local filesystem directly (fallback/development)
+     - `"auto"`: Defaults to `"gcs"` (UCS)
+   - **PRIMARY (GCS mode)**: Load raw Parquet files from GCS via UCS (`UCSDataLoader.load_trades()`, `load_book_snapshots()`)
+   - **FALLBACK (Local mode)**: If `data_source="local"` or FUSE mounted, check local `data_downloads/` path
    - Check if data exists in local catalog cache (`backend/data/parquet/`)
    - If data doesn't exist in catalog, automatically convert raw Parquet files to catalog format:
-     - Read raw Parquet files **from GCS via UCS** (or FUSE mount if available)
+     - Read raw Parquet files **from GCS via UCS** (when `data_source="gcs"`) or FUSE mount/local filesystem (when `data_source="local"`)
      - Supports multiple schemas: NautilusTrader format or common exchange format
      - Convert timestamps (microseconds/milliseconds → nanoseconds)
      - Map columns (e.g., `timestamp` → `ts_event`, `side` → `aggressor_side`, `amount` → `size`)
@@ -114,7 +115,8 @@ This document consolidates:
 
 **Note**: 
 - Data conversion happens automatically on first run. Subsequent runs use cached catalog data, making them faster.
-- **UCS is the primary interface** - all data operations go through UCS to/from GCS.
+- **UCS is the primary interface** when `data_source="gcs"` (default) - all data operations go through UCS to/from GCS.
+- Use `--data_source local` only for local development/testing without GCS access.
 
 ## Docker Compose Architecture
 - **backend**: Python 3.13 + NautilusTrader, mounts `data_downloads/` (read-only) and `backend/data/parquet/` (read-write); runs FastAPI server on port 8000; exposes CLI entrypoint `python backend/run_backtest.py ...`.
@@ -229,7 +231,7 @@ Flags:
   "environment": {
     "UNIFIED_CLOUD_LOCAL_PATH": "/app/data_downloads",
     "UNIFIED_CLOUD_SERVICES_USE_PARQUET": true,
-    "UNIFIED_CLOUD_SERVICES_USE_DIRECT_GCS": false,
+    "UNIFIED_CLOUD_SERVICES_USE_DIRECT_GCS": true,
     "DATA_CATALOG_PATH": "backend/data/parquet/"
   },
   "fx_stub": {

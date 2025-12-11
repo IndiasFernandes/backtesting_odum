@@ -17,7 +17,7 @@
 - [x] CeFi venues: Binance Spot/Futures, Bybit, OKX
 
 ### ⏳ In Progress
-- [ ] Deribit venue support (CeFi - Options & Futures)
+- [ ] Deribit venue support 
 - [ ] TradFi venue support (Interactive Brokers)
 - [ ] Enhanced TradFi data format support
 - [ ] TradFi-specific execution algorithms
