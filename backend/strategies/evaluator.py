@@ -38,7 +38,14 @@ class StrategyEvaluator:
         venue = Venue(venue_config_name)
         starting_balance = config["venue"]["starting_balance"]
         base_currency = config["venue"]["base_currency"]
-        instrument_id = InstrumentId.from_str(config["instrument"]["id"])
+        # Convert config instrument ID to NautilusTrader format
+        instrument_config = config["instrument"]
+        venue_config = config["venue"]
+        config_instrument_id = instrument_config["id"]
+        venue_name = venue_config["name"]
+        from backend.instruments.utils import get_instrument_id_for_nautilus
+        instrument_id_str = get_instrument_id_for_nautilus(config_instrument_id, venue_name)
+        instrument_id = InstrumentId.from_str(instrument_id_str)
         
         # Get account and balances
         account = portfolio.account(venue) if portfolio else None

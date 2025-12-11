@@ -107,8 +107,15 @@ class BacktestEngine:
         elif "data_source" not in config:
             config["data_source"] = "gcs"  # Default to GCS
         
-        # Get instrument ID from config
-        instrument_id_str = config["instrument"]["id"]
+        # Get instrument ID from config and convert to NautilusTrader format
+        instrument_config = config["instrument"]
+        venue_config = config["venue"]
+        config_instrument_id = instrument_config["id"]
+        venue_name = venue_config["name"]
+        
+        # Convert config format (e.g., "BINANCE-FUTURES:PERPETUAL:BTC-USDT@LIN") to Nautilus format (e.g., "BTC-USDT.BINANCE")
+        from backend.instruments.utils import get_instrument_id_for_nautilus
+        instrument_id_str = get_instrument_id_for_nautilus(config_instrument_id, venue_name)
         instrument_id = InstrumentId.from_str(instrument_id_str)
         
         # Auto-detect dataset from time window if not provided
@@ -399,8 +406,11 @@ class BacktestEngine:
             catalog_root=str(catalog_path)
         )
         
-        # Export ticks if requested
-        if export_ticks:
+        # Export ticks if requested OR if report mode (for charting)
+        # Always export ticks in report mode so charts can display data
+        # Report mode is when fast_mode=False (full report mode)
+        is_report_mode = not fast_mode
+        if export_ticks or is_report_mode:
             ticks = []
             try:
                 if self.catalog:
@@ -423,12 +433,13 @@ class BacktestEngine:
                             "aggressor_side": tick.aggressor_side.name if tick.aggressor_side else None,
                             "trade_id": str(tick.trade_id),
                         })
-                    print(f"Exported {len(ticks)} ticks for export")
+                    print(f"Exported {len(ticks)} ticks for charts")
             except Exception as e:
                 print(f"Warning: Could not export ticks: {e}")
             
-            ticks_dir = Path("frontend/public/tickdata")
-            ResultSerializer.save_ticks(ticks, ticks_dir, run_id)
+            if ticks:
+                ticks_dir = Path("frontend/public/tickdata")
+                ResultSerializer.save_ticks(ticks, ticks_dir, run_id)
         
         return result
 

@@ -56,13 +56,13 @@ def _get_algorithms_file() -> Path:
         return ALGORITHMS_FILE_OLD
     
     # Try alternative paths
-    alt_paths = [
-        Path(__file__).parent.parent / "execution" / "algorithms.py",
+        alt_paths = [
+            Path(__file__).parent.parent / "execution" / "algorithms.py",
         Path(__file__).parent.parent / "execution_algorithms.py",
-    ]
-    for path in alt_paths:
-        if path.exists():
-            return path
+        ]
+        for path in alt_paths:
+            if path.exists():
+                return path
     
     raise FileNotFoundError(
         f"Could not find execution algorithms file. Tried:\n"

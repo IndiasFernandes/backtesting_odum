@@ -314,7 +314,7 @@ class ResultSerializer:
             "summary": summary,
             "timeline": timeline,
             "orders": orders,
-            "ticks_path": f"frontend/public/tickdata/{run_id}.json",
+            "ticks_path": f"/tickdata/{run_id}.json",  # URL path for frontend to fetch
             "metadata": {
                 "config_path": config_path,
                 "snapshot_mode": snapshot_mode,
@@ -662,7 +662,19 @@ class ResultSerializer:
             traceback.print_exc()
             raise
         
-        # Save summary.json (high-level results only, without timeline/orders)
+        # Save timeline.json (needed for frontend charts)
+        timeline_file = run_dir / "timeline.json"
+        try:
+            with open(timeline_file, 'w') as f:
+                json.dump(timeline, f, indent=2, default=str)
+            print(f"✓ Saved {len(timeline)} timeline events to {timeline_file}")
+        except Exception as e:
+            print(f"Warning: Could not save timeline.json: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        # Save summary.json (high-level results only, without timeline/orders to keep it small)
+        # But include ticks_path for frontend chart loading
         summary_data = {
             'run_id': result.get('run_id'),
             'mode': result.get('mode'),
@@ -673,6 +685,7 @@ class ResultSerializer:
             'execution_time': result.get('execution_time'),
             'summary': summary,
             'metadata': result.get('metadata', {}),
+            'ticks_path': result.get('ticks_path', f"/tickdata/{run_id}.json"),  # Always include ticks_path
         }
         summary_file = run_dir / "summary.json"
         with open(summary_file, 'w') as f:

@@ -332,59 +332,97 @@ class DataConfigBuilder:
         if snapshot_mode in ("book", "both"):
             # Handle GCS book snapshot loading
             if data_source == "gcs" and ucs_loader:
+                # Check if data already exists in catalog BEFORE loading (performance optimization)
                 try:
-                    # Extract date from start timestamp
-                    date_str = start.strftime("%Y-%m-%d")
-                    
-                    # Convert instrument ID to GCS format
-                    config_instrument_id = instrument_config.get("id", str(instrument_id))
-                    venue_name = venue_config.get("name", "BINANCE")
-                    gcs_instrument_id = convert_instrument_id_to_gcs_format(config_instrument_id, venue_name)
-                    
-                    print(f"☁️  Loading book snapshots from GCS for {date_str}...")
-                    print(f"   GCS instrument: {gcs_instrument_id}")
-                    
-                    # Use async loader
-                    import asyncio
-                    book_df = asyncio.run(
-                        ucs_loader.load_book_snapshots(
-                            date_str=date_str,
-                            instrument_id=gcs_instrument_id,
-                            start_ts=start,
-                            end_ts=end,
-                            use_streaming=True
+                    existing_check = catalog.query(
+                        data_cls=OrderBookDeltas,
+                        instrument_ids=[instrument],
+                        start=start,
+                        end=end,
+                        limit=1
+                    )
+                    if existing_check:
+                        print(f"✅ Book snapshot data already exists in catalog for time window - skipping load and conversion")
+                        has_book_data = True
+                        # IMPORTANT: Add OrderBookDeltas config even when skipping load/conversion
+                        data_configs.append(
+                            BacktestDataConfig(
+                                catalog_path=str(catalog_path),
+                                data_cls=OrderBookDeltas,
+                                instrument_id=instrument,
+                                start_time=start,
+                                end_time=end,
+                            )
                         )
-                    )
-                    
-                    print(f"   Loaded {len(book_df)} book snapshot rows from GCS")
-                    
-                    # Filter by time window if needed
-                    if 'ts_event' in book_df.columns:
-                        start_ns = int(start.timestamp() * 1_000_000_000)
-                        end_ns = int(end.timestamp() * 1_000_000_000)
-                        book_df = book_df[(book_df['ts_event'] >= start_ns) & (book_df['ts_event'] <= end_ns)]
-                        print(f"   Filtered to {len(book_df)} rows in time window")
-                    
-                    # Convert book snapshots to catalog
-                    book_count = DataConverter.convert_orderbook_parquet_to_catalog(
-                        book_df,  # DataFrame instead of file path
-                        instrument,
-                        catalog,
-                        is_snapshot=True,
-                        price_precision=price_precision,
-                        size_precision=size_precision,
-                        skip_if_exists=True
-                    )
-                    print(f"✅ Registered {book_count} book snapshots from GCS to catalog")
-                    has_book_data = book_count > 0
-                except Exception as e:
-                    import traceback
-                    print(f"❌ Error loading book snapshots from GCS: {e}")
-                    traceback.print_exc()
-                    if snapshot_mode == "book":
-                        raise
-                    # For 'both' mode, continue without book data
+                    else:
+                        has_book_data = False
+                except Exception:
+                    # No data exists, proceed with loading
                     has_book_data = False
+                
+                # Only load and convert if data doesn't exist
+                if not has_book_data:
+                    try:
+                        # Extract date from start timestamp
+                        date_str = start.strftime("%Y-%m-%d")
+                        
+                        # Convert instrument ID to GCS format
+                        config_instrument_id = instrument_config.get("id", str(instrument_id))
+                        venue_name = venue_config.get("name", "BINANCE")
+                        gcs_instrument_id = convert_instrument_id_to_gcs_format(config_instrument_id, venue_name)
+                        
+                        print(f"☁️  Loading book snapshots from GCS for {date_str}...")
+                        print(f"   GCS instrument: {gcs_instrument_id}")
+                        
+                        # Use async loader
+                        import asyncio
+                        book_df = asyncio.run(
+                            ucs_loader.load_book_snapshots(
+                                date_str=date_str,
+                                instrument_id=gcs_instrument_id,
+                                start_ts=start,
+                                end_ts=end,
+                                use_streaming=True
+                            )
+                        )
+                        
+                        print(f"   Loaded {len(book_df)} book snapshot rows from GCS")
+                        
+                        # Note: Filtering already happened in load_book_snapshots() - no need to filter again
+                        # The DataFrame returned from load_book_snapshots is already filtered to the time window
+                        
+                        # Convert book snapshots to catalog
+                        book_count = DataConverter.convert_orderbook_parquet_to_catalog(
+                            book_df,  # DataFrame instead of file path
+                            instrument,
+                            catalog,
+                            is_snapshot=True,
+                            price_precision=price_precision,
+                            size_precision=size_precision,
+                            skip_if_exists=True
+                        )
+                        print(f"✅ Registered {book_count} book snapshots from GCS to catalog")
+                        has_book_data = book_count > 0
+                        
+                        # Add OrderBookDeltas config to data_configs
+                        if has_book_data:
+                            data_configs.append(
+                                BacktestDataConfig(
+                                    catalog_path=str(catalog_path),
+                                    data_cls=OrderBookDeltas,
+                                    instrument_id=instrument,
+                                    start_time=start,
+                                    end_time=end,
+                                )
+                            )
+                    except Exception as e:
+                        import traceback
+                        print(f"❌ Error loading book snapshots from GCS: {e}")
+                        traceback.print_exc()
+                        if snapshot_mode == "book":
+                            raise
+                        # For 'both' mode, continue without book data
+                        has_book_data = False
             
             # Handle local book snapshot files
             elif raw_book_paths and any(p.exists() for p in raw_book_paths):

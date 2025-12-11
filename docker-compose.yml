@@ -17,6 +17,7 @@ services:
       - ./backend/data/parquet:/app/backend/data/parquet
       - ./backend/backtest_results:/app/backend/backtest_results
       - ./external/data_downloads/configs:/app/external/data_downloads/configs:ro
+      - ./external/unified-cloud-services:/app/external/unified-cloud-services:ro
       - ./frontend/public/tickdata:/app/frontend/public/tickdata
       # Mount secrets directory for GCS authentication
       - ./.secrets:/app/.secrets:ro

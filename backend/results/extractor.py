@@ -15,6 +15,8 @@ class ResultExtractor:
         """
         Extract basic order and fill counts from engine.
         
+        Uses NautilusTrader's fills report for accurate fill counting.
+        
         Args:
             engine: BacktestEngine instance
         
@@ -29,13 +31,39 @@ class ResultExtractor:
             orders = engine.cache.orders()
             orders_count = len(orders) if orders else 0
             
-            # Get all fills from cache (orders with filled_qty > 0)
-            fills = [
-                o for o in orders
-                if hasattr(o, 'filled_qty') and o.filled_qty
-                and float(o.filled_qty.as_decimal()) > 0
-            ] if orders else []
-            fills_count = len(fills) if fills else 0
+            # Use fills report for accurate fill counting (more reliable than checking filled_qty)
+            try:
+                if hasattr(engine, 'trader'):
+                    fills_report = engine.trader.generate_order_fills_report()
+                    if fills_report is not None and len(fills_report) > 0:
+                        # Count unique orders that have fills
+                        fills_count = len(fills_report)
+                    else:
+                        # Fallback: check orders with filled_qty > 0
+                        fills = [
+                            o for o in orders
+                            if hasattr(o, 'filled_qty') and o.filled_qty
+                            and float(o.filled_qty.as_decimal()) > 0
+                        ] if orders else []
+                        fills_count = len(fills) if fills else 0
+                else:
+                    # Fallback: check orders with filled_qty > 0
+                    fills = [
+                        o for o in orders
+                        if hasattr(o, 'filled_qty') and o.filled_qty
+                        and float(o.filled_qty.as_decimal()) > 0
+                    ] if orders else []
+                    fills_count = len(fills) if fills else 0
+            except Exception as e:
+                # Fallback: check orders with filled_qty > 0
+                import sys
+                print(f"Warning: Could not generate fills report, using fallback method: {e}", file=sys.stderr)
+                fills = [
+                    o for o in orders
+                    if hasattr(o, 'filled_qty') and o.filled_qty
+                    and float(o.filled_qty.as_decimal()) > 0
+                ] if orders else []
+                fills_count = len(fills) if fills else 0
         
         return {
             'orders': orders_count,
@@ -430,11 +458,39 @@ class ResultExtractor:
         fills = None
         if engine and hasattr(engine, 'cache'):
             orders = engine.cache.orders()
-            fills = [
-                o for o in orders
-                if hasattr(o, 'filled_qty') and o.filled_qty
-                and float(o.filled_qty.as_decimal()) > 0
-            ] if orders else []
+            # Use fills report for accurate fill extraction (more reliable)
+            try:
+                if hasattr(engine, 'trader'):
+                    fills_report = engine.trader.generate_order_fills_report()
+                    if fills_report is not None and len(fills_report) > 0:
+                        # Convert fills report to list of orders with fills
+                        fills = [
+                            o for o in orders
+                            if o.client_order_id.value in fills_report['client_order_id'].astype(str).values
+                        ] if orders else []
+                    else:
+                        # Fallback: check orders with filled_qty > 0
+                        fills = [
+                            o for o in orders
+                            if hasattr(o, 'filled_qty') and o.filled_qty
+                            and float(o.filled_qty.as_decimal()) > 0
+                        ] if orders else []
+                else:
+                    # Fallback: check orders with filled_qty > 0
+                    fills = [
+                        o for o in orders
+                        if hasattr(o, 'filled_qty') and o.filled_qty
+                        and float(o.filled_qty.as_decimal()) > 0
+                    ] if orders else []
+            except Exception as e:
+                # Fallback: check orders with filled_qty > 0
+                import sys
+                print(f"Warning: Could not generate fills report for summary, using fallback: {e}", file=sys.stderr)
+                fills = [
+                    o for o in orders
+                    if hasattr(o, 'filled_qty') and o.filled_qty
+                    and float(o.filled_qty.as_decimal()) > 0
+                ] if orders else []
         
         returns = ResultExtractor.extract_returns_from_positions(engine, config, fills)
         

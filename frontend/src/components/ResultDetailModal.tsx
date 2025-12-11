@@ -25,10 +25,11 @@ export function ResultDetailModal({ result, onClose }: ResultDetailModalProps) {
   const [timeline, setTimeline] = useState<Array<{ ts: string; event: string; data: any }>>([])
   const [timelineHasMore, setTimelineHasMore] = useState(false)
   const [timelineOffset, setTimelineOffset] = useState(0)
-  const [tickData] = useState<Array<any>>([])
+  const [tickData, setTickData] = useState<Array<any>>([])
   const [loadingFills, setLoadingFills] = useState(false)
   const [loadingRejected, setLoadingRejected] = useState(false)
   const [loadingTimeline, setLoadingTimeline] = useState(false)
+  const [loadingTicks, setLoadingTicks] = useState(false)
   
   // Pagination constants
   // For charts: Load enough data to cover full time window (but limit points for performance)
@@ -84,8 +85,39 @@ export function ResultDetailModal({ result, onClose }: ResultDetailModalProps) {
         .catch(console.error)
         .finally(() => setLoadingTimeline(false))
       
-      // Skip tick data for now - it can be very large and cause performance issues
-      // Users can download it if needed
+      // Load tick data if available (for OHLC chart)
+      if (result.ticks_path) {
+        setLoadingTicks(true)
+        // Handle both absolute URLs and relative paths
+        const tickUrl = result.ticks_path.startsWith('http') 
+          ? result.ticks_path 
+          : result.ticks_path.startsWith('/') 
+            ? result.ticks_path 
+            : `/${result.ticks_path}`
+        
+        fetch(tickUrl)
+          .then(res => {
+            if (!res.ok) {
+              throw new Error(`HTTP ${res.status}: ${res.statusText}`)
+            }
+            return res.json()
+          })
+          .then(data => {
+            if (Array.isArray(data)) {
+              setTickData(data)
+              console.log(`Loaded ${data.length} ticks from ${tickUrl}`)
+            } else {
+              console.warn('Tick data is not an array:', data)
+            }
+          })
+          .catch(err => {
+            console.warn(`Could not load tick data from ${tickUrl}:`, err)
+            // Fallback: use timeline Trade events if available
+          })
+          .finally(() => setLoadingTicks(false))
+      } else {
+        console.log('No ticks_path in result, will use timeline Trade events as fallback')
+      }
     }
   }, [result])
   

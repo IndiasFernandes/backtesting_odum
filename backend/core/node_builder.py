@@ -76,7 +76,14 @@ class NodeBuilder:
             ImportableStrategyConfig instance
         """
         strategy_config = config["strategy"]
-        instrument_id = config["instrument"]["id"]
+        instrument_config = config["instrument"]
+        venue_config = config["venue"]
+        
+        # Convert config instrument ID to NautilusTrader format for strategy
+        config_instrument_id = instrument_config["id"]
+        venue_name = venue_config["name"]
+        from backend.instruments.utils import get_instrument_id_for_nautilus
+        instrument_id = get_instrument_id_for_nautilus(config_instrument_id, venue_name)
         
         # Create strategy config with instrument ID and execution algorithm settings
         strategy_config_dict = {

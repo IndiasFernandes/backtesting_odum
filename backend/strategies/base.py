@@ -146,14 +146,15 @@ class TempBacktestStrategy(Strategy):
                 f"{side.name} {quantity} @ {tick.price}"
             )
         else:
-            # Default behavior: Submit limit order at the EXACT trade price
-            # This ensures the order fills at the exact price from the trade data
+            # Default behavior: Submit limit order at trade price with GTC
+            # GTC allows the order to stay active and fill when order book matches
+            # Using trade price ensures realistic execution
             order = self.order_factory.limit(
                 instrument_id=tick.instrument_id,
                 order_side=side,
                 quantity=quantity,
-                price=tick.price,  # Use exact trade price from Parquet data
-                time_in_force=TimeInForce.IOC,  # Immediate or Cancel - ensures immediate execution at trade price
+                price=tick.price,  # Use exact trade price
+                time_in_force=TimeInForce.GTC,  # Good Till Cancel - allows order to fill when book matches
             )
             
             self.log.info(

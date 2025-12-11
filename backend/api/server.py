@@ -1013,6 +1013,17 @@ async def get_report_result(
     if summary_file.exists():
         with open(summary_file, 'r') as f:
             result = json.load(f)
+            # Ensure ticks_path is set if tick data exists
+            if 'ticks_path' not in result or not result.get('ticks_path'):
+                # Check if tick file exists and set path
+                tick_paths = [
+                    Path(f"frontend/public/tickdata/{run_id}.json"),
+                    Path(f"/app/frontend/public/tickdata/{run_id}.json"),
+                ]
+                for tick_path in tick_paths:
+                    if tick_path.exists():
+                        result['ticks_path'] = f"/tickdata/{run_id}.json"
+                        break
     
     # Load timeline if exists (with pagination)
     timeline_file = report_dir / "timeline.json"
@@ -1293,11 +1304,11 @@ async def get_instruments(venue_code: str, product_type: str) -> Dict[str, Any]:
             )
             
             # Quick check - limit results for speed
-            all_files = standardized_service.list_gcs_files(prefix="raw_tick_data/by_date/", max_results=200)
+            all_files = standardized_service.list_gcs_files(prefix="raw_tick_data/by_date/")
             
             # Build set of existing instrument IDs from GCS
             existing_instruments = set()
-            for file_info in all_files:
+            for file_info in all_files[:200]:  # Limit to first 200 for speed
                 filename = file_info['name'].split('/')[-1]
                 if filename.endswith('.parquet'):
                     file_instrument_id = filename[:-8]  # Remove .parquet
@@ -1314,7 +1325,8 @@ async def get_instruments(venue_code: str, product_type: str) -> Dict[str, Any]:
                     instruments = filtered_instruments
         except Exception as e:
             # If GCS check fails, return all registry instruments (fallback)
-            print(f"Note: Could not check GCS for instruments (non-critical): {e}")
+            import sys
+            print(f"Note: Could not check GCS for instruments (non-critical): {e}", file=sys.stderr)
     
     return {
         "venue_code": venue_code_upper,

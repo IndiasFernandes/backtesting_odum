@@ -23,11 +23,25 @@ COPY backend/ /app/backend/
 RUN find /app/backend -type d -name __pycache__ -exec rm -r {} + 2>/dev/null || true && \
     find /app/backend -name "*.pyc" -delete 2>/dev/null || true
 
-# Copy external directory (for configs only)
+# Copy external directory (for configs and unified-cloud-services)
 COPY external/ /app/external/
 
-# Install unified-cloud-services from GitHub (before pip install -e .)
-RUN pip install --no-cache-dir "git+https://github.com/IggyIkenna/unified-cloud-services.git"
+# Install unified-cloud-services (prefer local copy, fallback to GitHub)
+# Try installing from local copy first, then fallback to GitHub
+ARG GITHUB_TOKEN=""
+RUN if [ -d "/app/external/unified-cloud-services" ] && [ -f "/app/external/unified-cloud-services/pyproject.toml" ]; then \
+        echo "Installing unified-cloud-services from local copy..."; \
+        pip install --no-cache-dir -e /app/external/unified-cloud-services; \
+    else \
+        echo "Local copy not found, trying GitHub..."; \
+        if [ -n "$GITHUB_TOKEN" ]; then \
+            pip install --no-cache-dir "git+https://${GITHUB_TOKEN}@github.com/IggyIkenna/unified-cloud-services.git" || \
+            echo "⚠️  Warning: Could not install from GitHub with token."; \
+        else \
+            pip install --no-cache-dir "git+https://github.com/IggyIkenna/unified-cloud-services.git" || \
+            echo "⚠️  Warning: Could not install from GitHub. Install manually: pip install -e /app/external/unified-cloud-services"; \
+        fi; \
+    fi
 
 # Install execution-services package in editable mode (replaces PYTHONPATH)
 RUN pip install --no-cache-dir -e .

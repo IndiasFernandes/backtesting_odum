@@ -185,29 +185,58 @@ class UCSDataLoader:
                 return df
         
         # Fall back to GCS API
-        gcs_path = self._build_gcs_path(date_str, "trades", instrument_id)
-        print(f"☁️  Loading from GCS: {gcs_path}")
+        # Try multiple instrument ID formats (with and without @ suffix)
+        # Files in GCS may not have the @LIN suffix even though the ID includes it
+        instrument_ids_to_try = [
+            instrument_id,  # Full ID with @LIN
+            instrument_id.split("@")[0] if "@" in instrument_id else instrument_id,  # Without @ suffix
+        ]
         
-        # Use byte-range streaming if time window provided
-        if use_streaming and start_ts and end_ts:
+        last_error = None
+        for idx, inst_id in enumerate(instrument_ids_to_try):
+            gcs_path = self._build_gcs_path(date_str, "trades", inst_id)
+            if idx == 0 and len(instrument_ids_to_try) > 1:
+                print(f"☁️  Loading from GCS (attempt {idx+1}/{len(instrument_ids_to_try)}): {gcs_path}")
+            else:
+                print(f"☁️  Loading from GCS: {gcs_path}")
+            
             try:
-                print(f"   Using byte-range streaming for time window")
-                df = await self.ucs.download_from_gcs_streaming(
+                # Use byte-range streaming if time window provided
+                if use_streaming and start_ts and end_ts:
+                    try:
+                        print(f"   Using byte-range streaming for time window")
+                        df = await self.ucs.download_from_gcs_streaming(
+                            target=self.target,
+                            gcs_path=gcs_path,
+                            start_timestamp=start_ts,
+                            end_timestamp=end_ts
+                        )
+                        return df
+                    except Exception as e:
+                        print(f"   ⚠️  Streaming failed, falling back to full download: {e}")
+                
+                # Full file download
+                df = await self.ucs.download_from_gcs(
                     target=self.target,
-                    gcs_path=gcs_path,
-                    start_timestamp=start_ts,
-                    end_timestamp=end_ts
+                    gcs_path=gcs_path
                 )
+                print(f"   ✅ Successfully loaded {len(df)} rows from {gcs_path}")
                 return df
             except Exception as e:
-                print(f"   ⚠️  Streaming failed, falling back to full download: {e}")
+                last_error = e
+                if idx < len(instrument_ids_to_try) - 1:
+                    # Not the last attempt - this is expected, try next format
+                    print(f"   ⚠️  File not found (trying alternative format...): {gcs_path}")
+                else:
+                    # Last attempt failed
+                    print(f"   ❌ Failed to load {gcs_path}: {e}")
+                # Try next format
+                continue
         
-        # Full file download
-        df = await self.ucs.download_from_gcs(
-            target=self.target,
-            gcs_path=gcs_path
-        )
-        return df
+        # If all formats failed, raise the last error
+        if last_error:
+            raise last_error
+        raise FileNotFoundError(f"Trades file not found for {instrument_id} on {date_str}")
     
     async def load_book_snapshots(
         self,
@@ -258,29 +287,83 @@ class UCSDataLoader:
                 return df
         
         # Fall back to GCS API
-        gcs_path = self._build_gcs_path(date_str, "book_snapshot_5", instrument_id)
-        print(f"☁️  Loading from GCS: {gcs_path}")
+        # Try multiple instrument ID formats (with and without @ suffix)
+        # Files in GCS may not have the @LIN suffix even though the ID includes it
+        instrument_ids_to_try = [
+            instrument_id,  # Full ID with @LIN
+            instrument_id.split("@")[0] if "@" in instrument_id else instrument_id,  # Without @ suffix
+        ]
         
-        # Use byte-range streaming if time window provided
-        if use_streaming and start_ts and end_ts:
+        last_error = None
+        for idx, inst_id in enumerate(instrument_ids_to_try):
+            gcs_path = self._build_gcs_path(date_str, "book_snapshot_5", inst_id)
+            if idx == 0 and len(instrument_ids_to_try) > 1:
+                print(f"☁️  Loading from GCS (attempt {idx+1}/{len(instrument_ids_to_try)}): {gcs_path}")
+            else:
+                print(f"☁️  Loading from GCS: {gcs_path}")
+            
             try:
-                print(f"   Using byte-range streaming for time window")
-                df = await self.ucs.download_from_gcs_streaming(
+                # Use byte-range streaming if time window provided
+                if use_streaming and start_ts and end_ts:
+                    try:
+                        print(f"   Using byte-range streaming for time window")
+                        df = await self.ucs.download_from_gcs_streaming(
+                            target=self.target,
+                            gcs_path=gcs_path,
+                            start_timestamp=start_ts,
+                            end_timestamp=end_ts
+                        )
+                        return df
+                    except Exception as e:
+                        print(f"   ⚠️  Streaming failed, falling back to full download: {e}")
+                
+                # Full file download
+                df = await self.ucs.download_from_gcs(
                     target=self.target,
-                    gcs_path=gcs_path,
-                    start_timestamp=start_ts,
-                    end_timestamp=end_ts
+                    gcs_path=gcs_path
                 )
+                print(f"   ✅ Successfully loaded {len(df)} rows from {gcs_path}")
+                
+                # Filter by time window BEFORE returning (critical for performance)
+                if start_ts and end_ts:
+                    start_ns = int(start_ts.timestamp() * 1_000_000_000)
+                    end_ns = int(end_ts.timestamp() * 1_000_000_000)
+                    
+                    # Detect timestamp column
+                    if 'ts_event' in df.columns:
+                        ts_col = 'ts_event'
+                        original_len = len(df)
+                        df = df[(df[ts_col] >= start_ns) & (df[ts_col] <= end_ns)]
+                        if len(df) < original_len:
+                            print(f"   ✅ Filtered to {len(df)}/{original_len} rows in time window (before conversion)")
+                    elif 'timestamp' in df.columns:
+                        # Assume microseconds, convert to nanoseconds for comparison
+                        start_us = start_ns // 1000
+                        end_us = end_ns // 1000
+                        original_len = len(df)
+                        df = df[(df['timestamp'] >= start_us) & (df['timestamp'] <= end_us)]
+                        if len(df) < original_len:
+                            print(f"   ✅ Filtered to {len(df)}/{original_len} rows in time window (using timestamp column)")
+                    else:
+                        print(f"   ⚠️  Warning: No timestamp column found. Available columns: {list(df.columns)[:10]}")
+                        print(f"   ⚠️  Will process all {len(df)} rows (this may be slow)")
+                
                 return df
             except Exception as e:
-                print(f"   ⚠️  Streaming failed, falling back to full download: {e}")
+                last_error = e
+                if idx < len(instrument_ids_to_try) - 1:
+                    # Not the last attempt - this is expected, try next format
+                    print(f"   ⚠️  File not found (trying alternative format...): {gcs_path}")
+                else:
+                    # Last attempt failed
+                    print(f"   ❌ Failed to load {gcs_path}: {e}")
+                # Try next format
+                continue
         
-        # Full file download
-        df = await self.ucs.download_from_gcs(
-            target=self.target,
-            gcs_path=gcs_path
-        )
-        return df
+        # If all formats failed, raise the last error
+        if last_error:
+            raise last_error
+        raise FileNotFoundError(f"Book snapshot file not found for {instrument_id} on {date_str}")
     
     async def list_available_dates(
         self,

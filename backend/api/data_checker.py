@@ -45,21 +45,25 @@ class DataAvailabilityChecker:
         self.ucs_loader: Optional[UCSDataLoader] = None
         self.ucs_error: Optional[str] = None
         
-        if data_source == "gcs" and UCS_AVAILABLE:
-            try:
-                self.ucs_loader = UCSDataLoader()
-            except Exception as e:
-                error_msg = str(e)
-                self.ucs_error = error_msg
-                print(f"⚠️  Failed to initialize UCS loader: {error_msg}")
-                # For 'gcs' mode, we need UCS - raise the error
-                raise ValueError(
-                    f"Failed to initialize GCS access: {error_msg}\n"
-                    f"Please check:\n"
-                    f"  1. UNIFIED_CLOUD_SERVICES_GCS_BUCKET is set\n"
-                    f"  2. GOOGLE_APPLICATION_CREDENTIALS points to valid service account key\n"
-                    f"  3. Service account has GCS read permissions"
-                )
+        # Store the requested source (before any fallback)
+        self.requested_source = data_source
+        
+        if data_source == "gcs":
+            if not UCS_AVAILABLE:
+                # If UCS is not available, keep "gcs" as source but mark error
+                import sys
+                print(f"⚠️  unified-cloud-services not installed. GCS checks will fail.", file=sys.stderr)
+                self.data_source = "gcs"  # Keep as "gcs" to show user's intent
+                self.ucs_error = "unified-cloud-services not installed. Install with: pip install git+https://github.com/IggyIkenna/unified-cloud-services.git"
+            else:
+                try:
+                    self.ucs_loader = UCSDataLoader()
+                except Exception as e:
+                    error_msg = str(e)
+                    self.ucs_error = error_msg
+                    print(f"⚠️  Failed to initialize UCS loader: {error_msg}")
+                    # Keep as "gcs" to show user's intent, but mark error
+                    self.data_source = "gcs"
     
     def _extract_date_from_window(self, start: datetime, end: datetime) -> date:
         """Extract date from time window (use start date)."""
@@ -271,15 +275,23 @@ class DataAvailabilityChecker:
         }
         
         # Determine actual source (defaults to GCS)
-        actual_source = self.data_source
+        # Use the requested source, not the fallback
+        actual_source = self.data_source if hasattr(self, 'requested_source') else self.data_source
+        
         if actual_source == "auto":
             actual_source = "gcs"  # Default to GCS
         elif actual_source == "gcs":
-            # Explicitly use GCS - don't fall back to local even if FUSE is detected
+            # Explicitly use GCS - check if available
             if not self.ucs_loader:
-                raise ValueError(
-                    f"GCS data source requested but GCS access not available: {self.ucs_error or 'Unknown error'}"
+                # GCS was requested but not available - add clear error
+                result["errors"].append(
+                    f"❌ GCS data source requested but GCS access not available.\n"
+                    f"   Error: {self.ucs_error or 'Unknown error'}\n"
+                    f"   Please check GCS configuration or use 'local' data source."
                 )
+                result["valid"] = False
+                result["source"] = "gcs"  # Show what was requested
+                return result  # Return early with error
             actual_source = "gcs"
         
         result["source"] = actual_source

@@ -276,21 +276,68 @@ class DataConverter:
         if skip_if_exists:
             try:
                 # Check if we have orderbook data for this instrument
-                existing = catalog.query(
-                    data_cls=OrderBookDeltas,
-                    instrument_ids=[instrument_id],
-                    limit=1
-                )
-                if existing:
-                    # Data exists - skip conversion for performance
-                    if isinstance(parquet_path, pd.DataFrame):
-                        print(f"Orderbook data already exists in catalog for {instrument_id} (DataFrame: {len(parquet_path)} rows) - skipping conversion for performance")
+                # For DataFrame, we can check time window if timestamp is available
+                if isinstance(parquet_path, pd.DataFrame) and len(parquet_path) > 0:
+                    # Try to get time window from DataFrame
+                    timestamp_col = None
+                    for col in ['ts_event', 'timestamp', 'ts']:
+                        if col in parquet_path.columns:
+                            timestamp_col = col
+                            break
+                    
+                    if timestamp_col:
+                        # Get time range from DataFrame
+                        if timestamp_col == 'ts_event':
+                            min_ts = parquet_path[timestamp_col].min()
+                            max_ts = parquet_path[timestamp_col].max()
+                        else:
+                            # Assume microseconds, convert to nanoseconds
+                            min_ts = int(parquet_path[timestamp_col].min() * 1000)
+                            max_ts = int(parquet_path[timestamp_col].max() * 1000)
+                        
+                        # Check if data exists for this time window
+                        from datetime import datetime, timezone
+                        start_dt = datetime.fromtimestamp(min_ts / 1_000_000_000, tz=timezone.utc)
+                        end_dt = datetime.fromtimestamp(max_ts / 1_000_000_000, tz=timezone.utc)
+                        
+                        existing = catalog.query(
+                            data_cls=OrderBookDeltas,
+                            instrument_ids=[instrument_id],
+                            start=start_dt,
+                            end=end_dt,
+                            limit=1
+                        )
+                        if existing:
+                            print(f"✅ Orderbook data already exists in catalog for {instrument_id} (time window: {start_dt} to {end_dt}, {len(parquet_path)} rows) - skipping conversion")
+                            return 0
                     else:
-                        file_size_mb = parquet_path.stat().st_size / (1024 * 1024)
-                        print(f"Orderbook data already exists in catalog for {instrument_id} (file: {file_size_mb:.2f} MB) - skipping conversion for performance")
-                    return 0  # Return 0 to indicate no new data was written
-            except Exception:
+                        # No timestamp column - just check if any data exists
+                        existing = catalog.query(
+                            data_cls=OrderBookDeltas,
+                            instrument_ids=[instrument_id],
+                            limit=1
+                        )
+                        if existing:
+                            print(f"✅ Orderbook data already exists in catalog for {instrument_id} (DataFrame: {len(parquet_path)} rows) - skipping conversion")
+                            return 0
+                else:
+                    # For file path, just check if any data exists
+                    existing = catalog.query(
+                        data_cls=OrderBookDeltas,
+                        instrument_ids=[instrument_id],
+                        limit=1
+                    )
+                    if existing:
+                        if isinstance(parquet_path, pd.DataFrame):
+                            print(f"✅ Orderbook data already exists in catalog for {instrument_id} (DataFrame: {len(parquet_path)} rows) - skipping conversion")
+                        else:
+                            file_size_mb = parquet_path.stat().st_size / (1024 * 1024)
+                            print(f"✅ Orderbook data already exists in catalog for {instrument_id} (file: {file_size_mb:.2f} MB) - skipping conversion")
+                        return 0
+            except Exception as e:
                 # If check fails, proceed with conversion
+                import sys
+                print(f"⚠️  Skip check failed (proceeding with conversion): {e}", file=sys.stderr)
                 pass
         
         # Read Parquet file if path provided, otherwise use DataFrame
@@ -362,16 +409,24 @@ class DataConverter:
             )
         
         print(f"Found {len(ask_price_cols)} ask levels and {len(bid_price_cols)} bid levels")
+        print(f"Converting {len(df)} book snapshot rows to catalog format...")
         
         # Convert to OrderBookDeltas objects
         orderbook_deltas_list = []
         sequence = 0
         
         # Process in batches to avoid memory issues
-        batch_size = 10000
+        # Smaller batch size for book snapshots (they're more complex than trades)
+        batch_size = 5000
         total_written = 0
+        total_batches = (len(df) + batch_size - 1) // batch_size
+        print(f"Processing in {total_batches} batches of {batch_size} rows each...")
         
         for batch_start in range(0, len(df), batch_size):
+            batch_num = batch_start // batch_size + 1
+            if batch_num % 10 == 0 or batch_num == 1:  # Print progress every 10 batches
+                print(f"   Processing batch {batch_num}/{total_batches} (rows {batch_start} to {min(batch_start + batch_size, len(df))})...")
+            
             batch_df = df.iloc[batch_start:batch_start + batch_size]
             batch_deltas = []
             
@@ -461,14 +516,12 @@ class DataConverter:
                         deltas.append(delta)
                     
                     # Create OrderBookDeltas for this snapshot
+                    # Note: OrderBookDeltas only takes (instrument_id, deltas) - no ts_event/ts_init/sequence/is_snapshot
+                    # Those are properties of the individual OrderBookDelta objects, not the container
                     if deltas:
                         orderbook_deltas = OrderBookDeltas(
                             instrument_id=instrument_id,
                             deltas=deltas,
-                            ts_event=ts_event_ns,
-                            ts_init=ts_init_ns,
-                            sequence=sequence,
-                            is_snapshot=is_snapshot,
                         )
                         batch_deltas.append(orderbook_deltas)
                         sequence += 1
