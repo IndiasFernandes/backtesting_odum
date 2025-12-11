@@ -27,18 +27,29 @@ class DataConverter:
         """
         Convert raw TradeTick Parquet file to catalog format.
         
+        NOTE: Data in GCS is already pre-converted to NautilusTrader schema format
+        by market-tick-data-handler. This function only converts:
+        - DataFrame → TradeTick objects (NautilusTrader requirement)
+        - int8 aggressor_side → AggressorSide enum
+        - Uses instrument_id parameter (does NOT extract from DataFrame's instrument_key)
+        
         Supports multiple Parquet schemas:
         
-        1. NautilusTrader format (direct):
-           - ts_event, ts_init, price, size, aggressor_side, trade_id
+        1. Pre-converted NautilusTrader format (from GCS):
+           - instrument_key (canonical format, NOT used - instrument_id parameter is used)
+           - ts_event, ts_init (nanoseconds - already converted)
+           - price, size (already renamed from amount)
+           - aggressor_side (int8: 1=buy, 2=sell - needs enum conversion)
+           - trade_id (already renamed from id)
         
-        2. Common exchange format:
+        2. Legacy raw exchange format (for backward compatibility):
            - timestamp (microseconds), local_timestamp, price, amount, side, id
            - exchange, symbol (for instrument_id construction)
         
         Args:
-            parquet_path: Path to raw Parquet file
-            instrument_id: Instrument ID for the trades
+            parquet_path: Path to raw Parquet file (local or GCS path)
+            instrument_id: Instrument ID for the trades (NautilusTrader format)
+                          NOTE: This is passed in, NOT extracted from DataFrame's instrument_key
             catalog: ParquetDataCatalog instance to write to
             price_precision: Price decimal precision
             size_precision: Size decimal precision
@@ -122,20 +133,23 @@ class DataConverter:
         sizes = df[size_col].astype('float64')
         
         # Map aggressor side vectorized
+        # Handles both pre-converted format (int8: 1/2) and legacy format (string: 'buy'/'sell')
         # Convert to string codes first, then map to enum objects when creating TradeTick
         aggressor_str = df[aggressor_col].astype(str).str.upper()
         aggressor_side_codes = aggressor_str.map({
+            # Pre-converted format (from market-tick-data-handler)
+            '1': 'BUYER',      # int8: 1 = buy
+            '2': 'SELLER',     # int8: 2 = sell
+            # Legacy string formats (for backward compatibility)
             'BUY': 'BUYER',
             'BUYER': 'BUYER',
             'AGGRESSOR_BUY': 'BUYER',
-            '1': 'BUYER',
             'B': 'BUYER',
             'SELL': 'SELLER',
             'SELLER': 'SELLER',
             'AGGRESSOR_SELL': 'SELLER',
-            '2': 'SELLER',
             'S': 'SELLER',
-        }).fillna('BUYER')  # Default to BUYER
+        }).fillna('BUYER')  # Default to BUYER (edge case handling)
         
         # Convert trade IDs vectorized
         trade_ids_str = df[trade_id_col].astype(str)
