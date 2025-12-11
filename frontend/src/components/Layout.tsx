@@ -24,6 +24,7 @@ export default function Layout({ children }: LayoutProps) {
   const navItems = [
     { path: '/', label: 'Comparison' },
     { path: '/run', label: 'Run Backtest' },
+    { path: '/algorithms', label: 'Algorithms' },
     { path: '/definitions', label: 'Definitions' },
   ]
 

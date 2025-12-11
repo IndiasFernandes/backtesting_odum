@@ -352,8 +352,11 @@ exec_algorithm_params = {
 You can create your own execution algorithms by inheriting from `ExecAlgorithm`:
 
 ```python
-from nautilus_trader.core.components.exec_algorithm import ExecAlgorithm
+from nautilus_trader.execution.algorithm import ExecAlgorithm
 from nautilus_trader.model.orders.base import Order
+from nautilus_trader.model.objects import Quantity
+from decimal import Decimal
+from datetime import timedelta
 
 class MyCustomExecAlgorithm(ExecAlgorithm):
     def on_order(self, order: Order) -> None:
@@ -369,17 +372,35 @@ class MyCustomExecAlgorithm(ExecAlgorithm):
         interval_secs = params.get("interval_secs", 1)
         
         # Calculate number of child orders
-        num_orders = int(horizon_secs / interval_secs)
-        child_qty = order.quantity / num_orders
+        num_orders = max(1, int(horizon_secs / interval_secs))
+        child_qty_decimal = order.quantity.as_decimal() / Decimal(str(num_orders))
+        child_qty_decimal = round(child_qty_decimal, 16)  # Match precision
+        child_qty = Quantity.from_str(str(child_qty_decimal))
         
-        # Spawn child orders
+        # Spawn child orders with time delays
         for i in range(num_orders):
-            delay = i * interval_secs
-            self.spawn_market(
-                primary_order=order,
-                quantity=child_qty,
-                delay_secs=delay,
-            )
+            delay_secs = i * interval_secs
+            
+            if delay_secs > 0:
+                # Schedule delayed spawn using clock
+                spawn_time = self.clock.utc_now() + timedelta(seconds=delay_secs)
+                spawn_qty_capture = child_qty  # Capture in closure
+                alert_name = f"custom_spawn_{order.client_order_id}_{i}"
+                self.clock.set_time_alert(
+                    name=alert_name,
+                    alert_time=spawn_time,
+                    callback=lambda event, qty=spawn_qty_capture: self._spawn_child(order, qty)
+                )
+            else:
+                # Spawn immediately
+                self._spawn_child(order, child_qty)
+    
+    def _spawn_child(self, order: Order, quantity: Quantity) -> None:
+        """Helper to spawn child order."""
+        self.spawn_market(
+            primary=order,  # Note: parameter is "primary", not "primary_order"
+            quantity=quantity,
+        )
 ```
 
 ## Testing Execution Algorithms

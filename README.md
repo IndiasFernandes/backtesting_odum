@@ -16,6 +16,16 @@ This system provides a complete backtesting solution using NautilusTrader's high
 - **Docker Compose Stack**: Complete containerized backend (Python) and frontend (React/Vite)
 - **Production UI**: React dashboard with comparison tables, backtest runner, and config editor
 
+## Documentation
+
+**Source of Truth (SSOT)** documentation is organized in `docs/`:
+
+- **Live Execution**: `docs/live/` - Architecture, implementation guide, summary
+- **Backtesting**: `docs/backtesting/` - Current system, completion roadmap, execution algorithms
+- **Archive**: `docs/archive/` - Historical documentation
+
+See `docs/README.md` for complete documentation structure.
+
 ## Quick Start
 
 ### Prerequisites
@@ -125,7 +135,7 @@ docker-compose exec backend python backend/run_backtest.py \
 - `--report`: Report mode (full details: timeline, orders, metadata). Default if neither `--fast` nor `--report` specified.
 - `--export_ticks`: Export tick data (requires `--report`)
 - `--snapshot_mode`: `trades`, `book`, or `both` (default: `both`)
-- `--data_source`: `local`, `gcs`, or `auto` (default: `auto`)
+- `--data_source`: `local` or `gcs` (default: `gcs`)
 - `--no_close_positions`: Don't close positions at end (default: positions are closed)
 - `--dataset`: Optional dataset name (auto-detected from time window if not provided)
 
@@ -167,7 +177,7 @@ curl -X POST http://localhost:8000/api/backtest/run \
 - `report`: boolean - Report mode (full details). Default if neither `fast` nor `report` specified.
 - `export_ticks`: boolean - Export tick data (requires `report: true`)
 - `snapshot_mode`: string - `"trades"`, `"book"`, or `"both"` (default: `"both"`)
-- `data_source`: string - `"local"`, `"gcs"`, or `"auto"` (default: `"auto"`)
+- `data_source`: string - `"local"` or `"gcs"` (default: `"gcs"`)
 - `dataset`: string (optional) - Dataset name (auto-detected from time window if not provided)
 
 ## Project Structure
@@ -324,8 +334,9 @@ Format: `VENUE_INSTRUMENT_DATE_TIME_CONFIGHASH_UUID`
 
 - `UNIFIED_CLOUD_LOCAL_PATH` - Base path for data (default: `/app/data_downloads`)
 - `UNIFIED_CLOUD_SERVICES_USE_PARQUET` - Use Parquet format (default: `true`)
-- `UNIFIED_CLOUD_SERVICES_USE_DIRECT_GCS` - Direct GCS access (default: `false`)
+- `UNIFIED_CLOUD_SERVICES_USE_DIRECT_GCS` - Direct GCS access (default: `true` - system defaults to GCS)
 - `DATA_CATALOG_PATH` - Parquet catalog root (default: `/app/backend/data/parquet`)
+- `UNIFIED_CLOUD_SERVICES_GCS_BUCKET` - GCS bucket name (required for GCS data source)
 
 ## Status Updates
 

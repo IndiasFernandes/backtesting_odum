@@ -89,8 +89,8 @@ def parse_args():
         "--data_source",
         type=str,
         choices=["local", "gcs", "auto"],
-        default="auto",
-        help="Data source: 'local' for local files, 'gcs' for GCS bucket, 'auto' to auto-detect (default: auto)"
+        default="gcs",
+        help="Data source: 'gcs' for GCS bucket (default), 'local' for local files, 'auto' to auto-detect (defaults to gcs)"
     )
     
     parser.add_argument(

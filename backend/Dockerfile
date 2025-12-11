@@ -19,6 +19,10 @@ COPY pyproject.toml README.md /app/
 # Copy backend code (needed for package installation)
 COPY backend/ /app/backend/
 
+# Clear Python cache to ensure fresh code
+RUN find /app/backend -type d -name __pycache__ -exec rm -r {} + 2>/dev/null || true && \
+    find /app/backend -name "*.pyc" -delete 2>/dev/null || true
+
 # Copy external directory (for configs only)
 COPY external/ /app/external/
 
@@ -31,7 +35,7 @@ RUN pip install --no-cache-dir -e .
 # Set environment variables (PYTHONPATH no longer needed - package is installed)
 ENV UNIFIED_CLOUD_LOCAL_PATH=/app/data_downloads
 ENV UNIFIED_CLOUD_SERVICES_USE_PARQUET=true
-ENV UNIFIED_CLOUD_SERVICES_USE_DIRECT_GCS=false
+ENV UNIFIED_CLOUD_SERVICES_USE_DIRECT_GCS=true
 ENV DATA_CATALOG_PATH=/app/backend/data/parquet
 
 # Create necessary directories

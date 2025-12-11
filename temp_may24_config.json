@@ -31,7 +31,6 @@
   "environment": {
     "UNIFIED_CLOUD_LOCAL_PATH": "/app/data_downloads",
     "UNIFIED_CLOUD_SERVICES_USE_PARQUET": true,
-    "UNIFIED_CLOUD_SERVICES_USE_DIRECT_GCS": false,
     "DATA_CATALOG_PATH": "backend/data/parquet/"
   },
   "fx_stub": {

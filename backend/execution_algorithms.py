@@ -10,7 +10,7 @@ from datetime import timedelta
 from nautilus_trader.execution.algorithm import ExecAlgorithm
 from nautilus_trader.model.identifiers import ExecAlgorithmId
 from nautilus_trader.model.orders.base import Order
-from nautilus_trader.model.enums import OrderSide, TimeInForce
+from nautilus_trader.model.enums import OrderSide, TimeInForce, OrderType
 from nautilus_trader.model.objects import Quantity
 from nautilus_trader.config import ExecAlgorithmConfig
 
@@ -70,7 +70,10 @@ class TWAPExecAlgorithm(ExecAlgorithm):
         
         # Calculate number of child orders
         num_orders = max(1, int(horizon_secs / interval_secs))
-        child_qty = order.quantity / Decimal(str(num_orders))
+        child_qty_decimal = order.quantity.as_decimal() / Decimal(str(num_orders))
+        # Round to match instrument precision (max 16 decimal places)
+        child_qty_decimal = round(child_qty_decimal, 16)
+        child_qty = Quantity.from_str(str(child_qty_decimal))
         
         self.log.info(
             f"TWAP: Splitting {order.quantity} into {num_orders} orders of ~{child_qty} "
@@ -84,12 +87,14 @@ class TWAPExecAlgorithm(ExecAlgorithm):
             # Last order gets remainder to ensure full quantity is executed
             if i == num_orders - 1:
                 # Calculate remaining quantity
-                remaining = order.quantity - (child_qty * Decimal(str(num_orders - 1)))
-                spawn_qty = remaining if remaining > 0 else child_qty
+                remaining_decimal = order.quantity.as_decimal() - (child_qty_decimal * Decimal(str(num_orders - 1)))
+                remaining_decimal = round(remaining_decimal, 16)  # Round to match precision
+                remaining_qty = Quantity.from_str(str(remaining_decimal)) if remaining_decimal > 0 else child_qty
+                spawn_qty = remaining_qty
             else:
                 spawn_qty = child_qty
             
-            if spawn_qty <= 0:
+            if spawn_qty.as_decimal() <= 0:
                 continue
             
             # Schedule spawn using clock if delay is needed, otherwise spawn immediately
@@ -97,9 +102,11 @@ class TWAPExecAlgorithm(ExecAlgorithm):
                 # Schedule delayed spawn using clock - capture variables properly
                 spawn_time = self.clock.utc_now() + timedelta(seconds=delay_secs)
                 spawn_qty_capture = spawn_qty  # Capture in closure
-                self.clock.schedule(
-                    callback=lambda qty=spawn_qty_capture: self._spawn_twap_child(order, qty),
-                    when=spawn_time
+                alert_name = f"twap_spawn_{order.client_order_id}_{i}"
+                self.clock.set_time_alert(
+                    name=alert_name,
+                    alert_time=spawn_time,
+                    callback=lambda event, qty=spawn_qty_capture: self._spawn_twap_child(order, qty)
                 )
             else:
                 # Spawn immediately
@@ -107,7 +114,7 @@ class TWAPExecAlgorithm(ExecAlgorithm):
     
     def _spawn_twap_child(self, order: Order, quantity: Quantity) -> None:
         """Helper to spawn TWAP child order."""
-        if order.is_limit_order() and order.price:
+        if order.order_type == OrderType.LIMIT and order.price:
             self.spawn_limit(
                 primary=order,
                 quantity=quantity,
@@ -159,7 +166,10 @@ class VWAPExecAlgorithm(ExecAlgorithm):
         # For simplicity, use uniform distribution (can be enhanced with actual volume data)
         # In production, you would query historical volume data and distribute accordingly
         interval_secs = horizon_secs / intervals
-        child_qty = order.quantity / Decimal(str(intervals))
+        child_qty_decimal = order.quantity.as_decimal() / Decimal(str(intervals))
+        # Round to match instrument precision (max 16 decimal places)
+        child_qty_decimal = round(child_qty_decimal, 16)
+        child_qty = Quantity.from_str(str(child_qty_decimal))
         
         self.log.info(
             f"VWAP: Splitting {order.quantity} into {intervals} orders of ~{child_qty} "
@@ -173,12 +183,13 @@ class VWAPExecAlgorithm(ExecAlgorithm):
             
             # Last order gets remainder
             if i == intervals - 1:
-                remaining = order.quantity - (child_qty * Decimal(str(intervals - 1)))
-                spawn_qty = remaining if remaining > 0 else child_qty
+                remaining_decimal = order.quantity.as_decimal() - (child_qty_decimal * Decimal(str(intervals - 1)))
+                remaining_qty = Quantity.from_str(str(remaining_decimal)) if remaining_decimal > 0 else child_qty
+                spawn_qty = remaining_qty
             else:
                 spawn_qty = child_qty
             
-            if spawn_qty <= 0:
+            if spawn_qty.as_decimal() <= 0:
                 continue
             
             # Schedule spawn using clock if delay is needed, otherwise spawn immediately
@@ -186,9 +197,11 @@ class VWAPExecAlgorithm(ExecAlgorithm):
                 # Schedule delayed spawn using clock - capture variables properly
                 spawn_time = self.clock.utc_now() + timedelta(seconds=delay_secs)
                 spawn_qty_capture = spawn_qty  # Capture in closure
-                self.clock.schedule(
-                    callback=lambda qty=spawn_qty_capture: self._spawn_vwap_child(order, qty),
-                    when=spawn_time
+                alert_name = f"vwap_spawn_{order.client_order_id}_{i}"
+                self.clock.set_time_alert(
+                    name=alert_name,
+                    alert_time=spawn_time,
+                    callback=lambda event, qty=spawn_qty_capture: self._spawn_vwap_child(order, qty)
                 )
             else:
                 # Spawn immediately
@@ -196,7 +209,7 @@ class VWAPExecAlgorithm(ExecAlgorithm):
     
     def _spawn_vwap_child(self, order: Order, quantity: Quantity) -> None:
         """Helper to spawn VWAP child order."""
-        if order.is_limit_order() and order.price:
+        if order.order_type == OrderType.LIMIT and order.price:
             self.spawn_limit(
                 primary=order,
                 quantity=quantity,
@@ -258,7 +271,7 @@ class IcebergExecAlgorithm(ExecAlgorithm):
         )
         
         # Spawn first visible order immediately
-        if order.is_limit_order() and order.price:
+        if order.order_type == OrderType.LIMIT and order.price:
             self.spawn_limit(
                 primary=order,
                 quantity=visible_qty,
@@ -314,7 +327,7 @@ class IcebergExecAlgorithm(ExecAlgorithm):
                             f"(remaining: {remaining})"
                         )
                         
-                        if primary_order.is_limit_order() and primary_order.price:
+                        if primary_order.order_type == OrderType.LIMIT and primary_order.price:
                             self.spawn_limit(
                                 primary=primary_order,
                                 quantity=next_visible_qty,

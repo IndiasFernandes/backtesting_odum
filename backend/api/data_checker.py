@@ -30,36 +30,36 @@ def _convert_instrument_id_to_gcs_format(instrument_id: str) -> str:
 class DataAvailabilityChecker:
     """Checks data availability for a given time window and instrument."""
     
-    def __init__(self, data_source: str = "auto"):
+    def __init__(self, data_source: str = "gcs"):
         """
         Initialize data checker.
         
         Args:
-            data_source: 'local', 'gcs', or 'auto'
+            data_source: 'local' or 'gcs' (default: 'gcs')
         """
+        # Handle 'auto' - prefer GCS
+        if data_source == "auto":
+            data_source = "gcs"
+        
         self.data_source = data_source
         self.ucs_loader: Optional[UCSDataLoader] = None
         self.ucs_error: Optional[str] = None
         
-        if data_source in ("gcs", "auto") and UCS_AVAILABLE:
+        if data_source == "gcs" and UCS_AVAILABLE:
             try:
                 self.ucs_loader = UCSDataLoader()
             except Exception as e:
                 error_msg = str(e)
                 self.ucs_error = error_msg
                 print(f"⚠️  Failed to initialize UCS loader: {error_msg}")
-                if data_source == "gcs":
-                    # For 'gcs' mode, we need UCS - raise the error
-                    raise ValueError(
-                        f"Failed to initialize GCS access: {error_msg}\n"
-                        f"Please check:\n"
-                        f"  1. UNIFIED_CLOUD_SERVICES_GCS_BUCKET is set\n"
-                        f"  2. GOOGLE_APPLICATION_CREDENTIALS points to valid service account key\n"
-                        f"  3. Service account has GCS read permissions"
-                    )
-                # For 'auto', fall back to local
-                self.data_source = "local"
-                print(f"ℹ️  Falling back to local file access")
+                # For 'gcs' mode, we need UCS - raise the error
+                raise ValueError(
+                    f"Failed to initialize GCS access: {error_msg}\n"
+                    f"Please check:\n"
+                    f"  1. UNIFIED_CLOUD_SERVICES_GCS_BUCKET is set\n"
+                    f"  2. GOOGLE_APPLICATION_CREDENTIALS points to valid service account key\n"
+                    f"  3. Service account has GCS read permissions"
+                )
     
     def _extract_date_from_window(self, start: datetime, end: datetime) -> date:
         """Extract date from time window (use start date)."""
@@ -270,14 +270,10 @@ class DataAvailabilityChecker:
             "warnings": []
         }
         
-        # Determine actual source
+        # Determine actual source (defaults to GCS)
         actual_source = self.data_source
         if actual_source == "auto":
-            # Try GCS first if available
-            if self.ucs_loader:
-                actual_source = "gcs"
-            else:
-                actual_source = "local"
+            actual_source = "gcs"  # Default to GCS
         elif actual_source == "gcs":
             # Explicitly use GCS - don't fall back to local even if FUSE is detected
             if not self.ucs_loader:

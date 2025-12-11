@@ -171,7 +171,7 @@ export default function BacktestRunnerPage() {
           has_book: false,
           date: '',
           dataset: '',
-          source: formData.data_source || 'auto',
+          source: formData.data_source || 'gcs',
           messages: [],
           errors: [`Error checking data: ${error.message || 'Unknown error'}`],
           warnings: [],
@@ -316,7 +316,7 @@ export default function BacktestRunnerPage() {
     if (formData.report) flags.push('--report')
     if (formData.export_ticks) flags.push('--export_ticks')
     if (formData.snapshot_mode) flags.push(`--snapshot_mode ${formData.snapshot_mode}`)
-    if (formData.data_source && formData.data_source !== 'auto') {
+    if (formData.data_source && formData.data_source !== 'gcs') {
       flags.push(`--data_source ${formData.data_source}`)
     }
     

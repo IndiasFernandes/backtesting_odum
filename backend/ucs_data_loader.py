@@ -58,14 +58,22 @@ class UCSDataLoader:
             bigquery_dataset="market_data"  # Not used for GCS operations
         )
         
-        # Check for FUSE mount
-        self.local_path = os.getenv("UNIFIED_CLOUD_LOCAL_PATH", "/app/data_downloads")
-        self.use_fuse = self._check_fuse_mount()
+        # Check if direct GCS is explicitly enabled
+        use_direct_gcs = os.getenv("UNIFIED_CLOUD_SERVICES_USE_DIRECT_GCS", "false").lower() == "true"
         
-        if self.use_fuse:
-            print(f"✅ FUSE mount detected at: {self.local_path}")
+        self.local_path = os.getenv("UNIFIED_CLOUD_LOCAL_PATH", "/app/data_downloads")
+        
+        if use_direct_gcs:
+            # Skip FUSE mount check when direct GCS is enabled
+            self.use_fuse = False
+            print(f"ℹ️  Using direct GCS access (UNIFIED_CLOUD_SERVICES_USE_DIRECT_GCS=true)")
         else:
-            print(f"ℹ️  Using direct GCS access (no FUSE mount)")
+            # Check for FUSE mount only if direct GCS is not enabled
+            self.use_fuse = self._check_fuse_mount()
+            if self.use_fuse:
+                print(f"✅ FUSE mount detected at: {self.local_path}")
+            else:
+                print(f"ℹ️  Using direct GCS access (no FUSE mount)")
     
     def _check_fuse_mount(self) -> bool:
         """Check if FUSE mount is available."""

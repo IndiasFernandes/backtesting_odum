@@ -20,6 +20,11 @@ try:
     from backend.api.mount_status import check_mount_status
     from backend.utils.log_capture import get_log_capture
     from backend.api.data_checker import DataAvailabilityChecker
+    # Import ResultSerializer at module level to verify it loads
+    from backend.results import ResultSerializer
+    print("=" * 80)
+    print("✓ ResultSerializer imported successfully at module level")
+    print("=" * 80)
 except ImportError as e:
     import sys
     print(f"Error importing backend modules: {e}", file=sys.stderr)
@@ -31,6 +36,16 @@ app = FastAPI(title="Odum Trader Backtest API")
 
 # Store active backtest tasks and their log queues (thread-safe queues)
 _active_backtests: Dict[str, queue.Queue] = {}
+
+# Import and include algorithm manager router
+try:
+    from backend.api.algorithm_manager import router as algorithm_router
+    app.include_router(algorithm_router)
+    print(f"✓ Algorithm manager router included: {len([r for r in app.routes if hasattr(r, 'path') and 'algorithm' in r.path.lower()])} routes")
+except Exception as e:
+    print(f"✗ Warning: Could not import/include algorithm manager router: {e}")
+    import traceback
+    traceback.print_exc()
 
 # CORS middleware
 app.add_middleware(
@@ -119,7 +134,7 @@ class BacktestRunRequest(BaseModel):
     report: bool = False
     export_ticks: bool = False
     snapshot_mode: str = "both"
-    data_source: str = "auto"  # 'local', 'gcs', or 'auto'
+    data_source: str = "gcs"  # 'local' or 'gcs' (default: 'gcs')
     exec_algorithm: Optional[str] = None  # 'NORMAL', 'TWAP', 'VWAP', 'ICEBERG'
     exec_algorithm_params: Optional[Dict[str, Any]] = None  # Algorithm-specific parameters
 
@@ -129,7 +144,7 @@ class DataCheckRequest(BaseModel):
     start: str
     end: str
     snapshot_mode: str = "both"
-    data_source: str = "auto"
+    data_source: str = "gcs"
 
 
 def _run_backtest_sync(
@@ -208,7 +223,7 @@ def _run_backtest_sync(
             send_step("Saving results...")
             
             # Save results to disk (same as CLI)
-            from backend.results import ResultSerializer
+            # ResultSerializer is already imported at module level
             results_base = _get_results_output_dir()
             
             if request.fast:
@@ -220,8 +235,14 @@ def _run_backtest_sync(
                 # Report mode (explicit or default when fast=False)
                 output_dir = results_base / "report"
                 output_dir.mkdir(parents=True, exist_ok=True)
-                ResultSerializer.save_report(result, output_dir)
-                print(f"Report mode result saved to: {output_dir}/{result['run_id']}/summary.json")
+                try:
+                    ResultSerializer.save_report(result, output_dir)
+                    print(f"Report mode result saved to: {output_dir}/{result['run_id']}/summary.json")
+                except Exception as e:
+                    print(f"ERROR in save_report: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    raise
             
             # Get captured logs and latest step
             logs = log_capture.get_logs()
@@ -301,7 +322,7 @@ async def run_backtest(request: BacktestRunRequest) -> Dict[str, Any]:
             )
             
             # Save results to disk (same as CLI)
-            from backend.results import ResultSerializer
+            # ResultSerializer is already imported at module level
             results_base = _get_results_output_dir()
             
             if request.fast:
@@ -313,8 +334,14 @@ async def run_backtest(request: BacktestRunRequest) -> Dict[str, Any]:
                 # Report mode (explicit or default when fast=False)
                 output_dir = results_base / "report"
                 output_dir.mkdir(parents=True, exist_ok=True)
-                ResultSerializer.save_report(result, output_dir)
-                print(f"Report mode result saved to: {output_dir}/{result['run_id']}/summary.json")
+                try:
+                    ResultSerializer.save_report(result, output_dir)
+                    print(f"Report mode result saved to: {output_dir}/{result['run_id']}/summary.json")
+                except Exception as e:
+                    print(f"ERROR in save_report: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    raise
             
             # Get captured logs and latest step
             logs = log_capture.get_logs()

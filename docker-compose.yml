@@ -21,7 +21,7 @@ services:
     environment:
       - UNIFIED_CLOUD_LOCAL_PATH=/app/data_downloads
       - UNIFIED_CLOUD_SERVICES_USE_PARQUET=true
-      - UNIFIED_CLOUD_SERVICES_USE_DIRECT_GCS=false
+      - UNIFIED_CLOUD_SERVICES_USE_DIRECT_GCS=true
       - DATA_CATALOG_PATH=/app/backend/data/parquet
       # GCS credentials (defaults to .secrets/gcs/gcs-service-account.json)
       - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-/app/.secrets/gcs/gcs-service-account.json}

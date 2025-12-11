@@ -51,6 +51,20 @@ export interface DataCheckResult {
   warnings: string[]
 }
 
+export interface AlgorithmInfo {
+  name: string
+  id: string
+  description: string
+  parameters: Record<string, any>
+  code?: string
+}
+
+export interface AlgorithmCodeRequest {
+  name: string
+  code: string
+  validate_only?: boolean
+}
+
 export interface BacktestResult {
   run_id: string
   mode: 'fast' | 'report'
@@ -329,6 +343,27 @@ export const backtestApi = {
   
   getInstruments: async (venueCode: string, productType: string): Promise<InstrumentsResponse> => {
     const response = await api.get<InstrumentsResponse>(`/api/instruments/list/${venueCode}/${productType}`)
+    return response.data
+  },
+
+  // Algorithm management API
+  listAlgorithms: async (): Promise<AlgorithmInfo[]> => {
+    const response = await api.get<AlgorithmInfo[]>('/api/algorithms/')
+    return response.data
+  },
+
+  getAlgorithm: async (algorithmId: string): Promise<AlgorithmInfo> => {
+    const response = await api.get<AlgorithmInfo>(`/api/algorithms/${algorithmId}`)
+    return response.data
+  },
+
+  validateAlgorithmCode: async (request: AlgorithmCodeRequest): Promise<{ valid: boolean; error?: string; message?: string }> => {
+    const response = await api.post('/api/algorithms/validate', request)
+    return response.data
+  },
+
+  saveAlgorithm: async (request: AlgorithmCodeRequest): Promise<{ success: boolean; message: string }> => {
+    const response = await api.post('/api/algorithms/save', request)
     return response.data
   },
 }

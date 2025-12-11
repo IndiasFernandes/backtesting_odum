@@ -10,6 +10,7 @@ const routerConfig = {
 import BacktestComparisonPage from './pages/BacktestComparisonPage'
 import BacktestRunnerPage from './pages/BacktestRunnerPage'
 import DefinitionsPage from './pages/DefinitionsPage'
+import AlgorithmManagerPage from './pages/AlgorithmManagerPage'
 import Layout from './components/Layout'
 
 function App() {
@@ -20,6 +21,7 @@ function App() {
           <Route path="/" element={<BacktestComparisonPage />} />
           <Route path="/run" element={<BacktestRunnerPage />} />
           <Route path="/definitions" element={<DefinitionsPage />} />
+          <Route path="/algorithms" element={<AlgorithmManagerPage />} />
         </Routes>
       </Layout>
     </BrowserRouter>
