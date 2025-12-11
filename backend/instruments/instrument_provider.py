@@ -16,8 +16,8 @@ from backend.instruments.custom_instruments import (
     SportsMarketInstrument,
     TradFiInstrument,
 )
-from backend.config_loader import ConfigLoader
-from backend.catalog_manager import CatalogManager
+from backend.config.loader import ConfigLoader
+from backend.data.catalog import CatalogManager
 
 
 class CustomInstrumentProvider(InstrumentProvider):

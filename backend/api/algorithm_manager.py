@@ -9,9 +9,13 @@ from pydantic import BaseModel
 
 router = APIRouter(prefix="/api/algorithms", tags=["algorithms"])
 
-# Path to execution algorithms file
-ALGORITHMS_FILE = Path(__file__).parent.parent.parent / "backend" / "execution_algorithms.py"
-ALGORITHMS_FILE_DOCKER = Path("/app/backend/execution_algorithms.py")
+# Path to execution algorithms file (updated after reorganization)
+# New location: backend/execution/algorithms.py
+# Old location (for backward compatibility): backend/execution_algorithms.py
+ALGORITHMS_FILE_NEW = Path(__file__).parent.parent / "execution" / "algorithms.py"
+ALGORITHMS_FILE_OLD = Path(__file__).parent.parent / "execution_algorithms.py"
+ALGORITHMS_FILE_DOCKER_NEW = Path("/app/backend/execution/algorithms.py")
+ALGORITHMS_FILE_DOCKER_OLD = Path("/app/backend/execution_algorithms.py")
 
 
 class AlgorithmInfo(BaseModel):
@@ -38,21 +42,34 @@ class AlgorithmTestRequest(BaseModel):
 
 def _get_algorithms_file() -> Path:
     """Get the path to the algorithms file."""
-    # Try Docker path first (most common in production)
-    if ALGORITHMS_FILE_DOCKER.exists():
-        return ALGORITHMS_FILE_DOCKER
-    elif ALGORITHMS_FILE.exists():
-        return ALGORITHMS_FILE
-    else:
-        # Try alternative Docker paths
-        alt_paths = [
-            Path("/app/backend/execution_algorithms.py"),
-            Path(__file__).parent.parent / "execution_algorithms.py",
-        ]
-        for path in alt_paths:
-            if path.exists():
-                return path
-        raise FileNotFoundError(f"Could not find execution_algorithms.py. Tried: {ALGORITHMS_FILE_DOCKER}, {ALGORITHMS_FILE}")
+    # Try new location first (after reorganization)
+    # Docker paths
+    if ALGORITHMS_FILE_DOCKER_NEW.exists():
+        return ALGORITHMS_FILE_DOCKER_NEW
+    if ALGORITHMS_FILE_DOCKER_OLD.exists():
+        return ALGORITHMS_FILE_DOCKER_OLD
+    
+    # Local paths
+    if ALGORITHMS_FILE_NEW.exists():
+        return ALGORITHMS_FILE_NEW
+    if ALGORITHMS_FILE_OLD.exists():
+        return ALGORITHMS_FILE_OLD
+    
+    # Try alternative paths
+    alt_paths = [
+        Path(__file__).parent.parent / "execution" / "algorithms.py",
+        Path(__file__).parent.parent / "execution_algorithms.py",
+    ]
+    for path in alt_paths:
+        if path.exists():
+            return path
+    
+    raise FileNotFoundError(
+        f"Could not find execution algorithms file. Tried:\n"
+        f"  New location: {ALGORITHMS_FILE_DOCKER_NEW}, {ALGORITHMS_FILE_NEW}\n"
+        f"  Old location: {ALGORITHMS_FILE_DOCKER_OLD}, {ALGORITHMS_FILE_OLD}\n"
+        f"  Alternative paths: {alt_paths}"
+    )
 
 
 def _parse_algorithm_info(code: str, class_name: str) -> Dict[str, Any]:

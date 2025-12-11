@@ -12,9 +12,11 @@ interface TickData {
 
 interface FillData {
   order_id?: string
+  id?: string
   timestamp?: string
   price: number
   quantity: number
+  amount?: number
   side?: string
 }
 

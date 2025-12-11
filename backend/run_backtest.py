@@ -6,10 +6,10 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from backend.backtest_engine import BacktestEngine
-from backend.catalog_manager import CatalogManager
-from backend.config_loader import ConfigLoader
-from backend.results import ResultSerializer
+from backend.core.engine import BacktestEngine
+from backend.data.catalog import CatalogManager
+from backend.config.loader import ConfigLoader
+from backend.results.serializer import ResultSerializer
 from backend.utils.validation import validate_iso8601
 
 

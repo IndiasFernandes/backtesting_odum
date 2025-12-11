@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, AreaChart, Area } from 'recharts'
+import { XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts'
 import { BacktestResult } from '../services/api'
 import { parseISO } from 'date-fns'
 
@@ -12,8 +12,11 @@ export function PnLChart({ result, timeline }: PnLChartProps) {
   const chartData = useMemo(() => {
     if (!timeline || timeline.length === 0) return []
 
-    const startingBalance = result.summary?.account?.starting_balance || 1000000
-    const totalPnL = result.summary?.pnl || 0
+    const account = result.summary?.account
+    const startingBalance: number = (account && typeof account.starting_balance === 'number') 
+      ? account.starting_balance 
+      : 1000000
+    const totalPnL: number = result.summary?.pnl || 0
     
     // Process timeline to calculate cumulative PnL over time
     const dataPoints: Array<{
@@ -22,8 +25,6 @@ export function PnLChart({ result, timeline }: PnLChartProps) {
       cumulativePnL: number
       balance: number
     }> = []
-
-    let cumulativePnL = 0.0
     
     // Use backtest time window if available, otherwise use timeline range
     let startTime: number

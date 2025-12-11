@@ -13,15 +13,15 @@ from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 
 try:
-    from backend.backtest_engine import BacktestEngine
-    from backend.catalog_manager import CatalogManager
-    from backend.config_loader import ConfigLoader
+    from backend.core.engine import BacktestEngine
+    from backend.data.catalog import CatalogManager
+    from backend.config.loader import ConfigLoader
     from backend.utils.validation import validate_iso8601
     from backend.api.mount_status import check_mount_status
     from backend.utils.log_capture import get_log_capture
     from backend.api.data_checker import DataAvailabilityChecker
     # Import ResultSerializer at module level to verify it loads
-    from backend.results import ResultSerializer
+    from backend.results.serializer import ResultSerializer
     print("=" * 80)
     print("✓ ResultSerializer imported successfully at module level")
     print("=" * 80)
@@ -1205,7 +1205,7 @@ async def get_venues() -> Dict[str, Any]:
     Only returns venues that have actual data in GCS.
     Uses unified-cloud-services for GCS access.
     """
-    from backend.instrument_registry import get_venues_by_category
+    from backend.instruments.registry import get_venues_by_category
     import os
     
     bucket_name = os.getenv("UNIFIED_CLOUD_SERVICES_GCS_BUCKET")
@@ -1215,7 +1215,7 @@ async def get_venues() -> Dict[str, Any]:
     
     try:
         # Use unified-cloud-services instead of direct google.cloud.storage
-        from backend.ucs_data_loader import UCSDataLoader
+        from backend.data.loader import UCSDataLoader
         from unified_cloud_services.domain.standardized_service import StandardizedDomainCloudService
         from unified_cloud_services.core.cloud_config import CloudTarget
         
@@ -1291,7 +1291,7 @@ async def get_venues() -> Dict[str, Any]:
 @app.get("/api/instruments/types/{venue_code}")
 async def get_instrument_types(venue_code: str) -> Dict[str, Any]:
     """Get available instrument types for a venue."""
-    from backend.instrument_registry import get_instrument_types_for_venue
+    from backend.instruments.registry import get_instrument_types_for_venue
     
     types = get_instrument_types_for_venue(venue_code.upper())
     return {
@@ -1307,7 +1307,7 @@ async def get_instruments(venue_code: str, product_type: str) -> Dict[str, Any]:
     
     Only returns instruments that actually exist in GCS.
     """
-    from backend.instrument_registry import (
+    from backend.instruments.registry import (
         get_common_instruments,
         convert_to_gcs_format,
         convert_to_nautilus_format,
@@ -1329,7 +1329,7 @@ async def get_instruments(venue_code: str, product_type: str) -> Dict[str, Any]:
     instruments = []
     try:
         # Use unified-cloud-services instead of direct google.cloud.storage
-        from backend.ucs_data_loader import UCSDataLoader
+        from backend.data.loader import UCSDataLoader
         from unified_cloud_services.domain.standardized_service import StandardizedDomainCloudService
         
         # Create UCS loader

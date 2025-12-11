@@ -10,7 +10,7 @@ from typing import Dict, Any, Optional, List
 import asyncio
 
 try:
-    from backend.ucs_data_loader import UCSDataLoader
+    from backend.data.loader import UCSDataLoader
     UCS_AVAILABLE = True
 except ImportError:
     UCS_AVAILABLE = False
@@ -23,7 +23,7 @@ def _convert_instrument_id_to_gcs_format(instrument_id: str) -> str:
     
     Uses the centralized instrument_registry for conversion.
     """
-    from backend.instrument_utils import convert_instrument_id_to_gcs_format
+    from backend.instruments.utils import convert_instrument_id_to_gcs_format
     return convert_instrument_id_to_gcs_format(instrument_id)
 
 

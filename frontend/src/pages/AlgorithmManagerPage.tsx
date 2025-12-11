@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { backtestApi, AlgorithmInfo, AlgorithmCodeRequest } from '../services/api'
+import { backtestApi, AlgorithmCodeRequest } from '../services/api'
 import { useToastContext } from '../components/Layout'
 
 export default function AlgorithmManagerPage() {
@@ -31,9 +31,9 @@ export default function AlgorithmManagerPage() {
     onSuccess: (data) => {
       setValidationResult(data)
       if (data.valid) {
-        toast({ type: 'success', message: 'Code is valid!' })
+        toast.success('Code is valid!')
       } else {
-        toast({ type: 'error', message: data.error || 'Code validation failed' })
+        toast.error(data.error || 'Code validation failed')
       }
     },
   })
@@ -42,13 +42,13 @@ export default function AlgorithmManagerPage() {
   const saveMutation = useMutation({
     mutationFn: (request: AlgorithmCodeRequest) => backtestApi.saveAlgorithm(request),
     onSuccess: (data) => {
-      toast({ type: 'success', message: data.message || 'Algorithm saved successfully' })
+      toast.success(data.message || 'Algorithm saved successfully')
       setIsEditing(false)
       queryClient.invalidateQueries({ queryKey: ['algorithms'] })
       queryClient.invalidateQueries({ queryKey: ['algorithm', selectedAlgorithm] })
     },
     onError: (error: any) => {
-      toast({ type: 'error', message: error.response?.data?.detail || 'Failed to save algorithm' })
+      toast.error(error.response?.data?.detail || 'Failed to save algorithm')
     },
   })
 
@@ -90,7 +90,7 @@ export default function AlgorithmManagerPage() {
     if (!selectedAlgorithm || !editingCode) return
     
     if (!validationResult?.valid) {
-      toast({ type: 'warning', message: 'Please validate code before saving' })
+      toast.info('Please validate code before saving')
       return
     }
     

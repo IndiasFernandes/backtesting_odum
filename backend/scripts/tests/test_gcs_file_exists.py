@@ -9,7 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from backend.api.data_checker import _convert_instrument_id_to_gcs_format
-from backend.ucs_data_loader import UCSDataLoader
+from backend.data.loader import UCSDataLoader
 
 async def test_gcs_file():
     """Test if GCS file exists."""

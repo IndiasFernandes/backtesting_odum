@@ -4,7 +4,7 @@ Utility functions for instrument ID and venue name conversion.
 Handles conversion between config format and GCS format for various exchanges.
 """
 from typing import Dict, Optional
-from backend.instrument_registry import (
+from backend.instruments.registry import (
     convert_to_gcs_format,
     convert_to_nautilus_format,
     get_config_instrument_id,
