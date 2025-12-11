@@ -19,23 +19,19 @@ COPY pyproject.toml README.md /app/
 # Copy backend code (needed for package installation)
 COPY backend/ /app/backend/
 
-# Copy external directory first (may contain unified-cloud-services)
+# Copy external directory (for configs only)
 COPY external/ /app/external/
 
-# Check if unified-cloud-services exists locally, otherwise use GitHub token
-# Priority: 1) Local copy, 2) GitHub token, 3) Direct (will fail for private repos)
+# Install unified-cloud-services from GitHub
+# Supports GitHub token for private repos via build arg
 ARG GITHUB_TOKEN
 ARG GITHUB_USER=IggyIkenna
 
-# Install unified-cloud-services first (if local copy exists)
-RUN if [ -d "/app/external/unified-cloud-services" ] && ([ -f "/app/external/unified-cloud-services/setup.py" ] || [ -f "/app/external/unified-cloud-services/pyproject.toml" ]); then \
-        echo "✅ Using local unified-cloud-services package"; \
-        pip install --no-cache-dir /app/external/unified-cloud-services; \
-    elif [ -n "$GITHUB_TOKEN" ]; then \
-        echo "🔐 Using GitHub token for private repo access"; \
+RUN if [ -n "$GITHUB_TOKEN" ]; then \
+        echo "🔐 Installing unified-cloud-services with GitHub token"; \
         pip install --no-cache-dir "git+https://${GITHUB_TOKEN}@github.com/${GITHUB_USER}/unified-cloud-services.git"; \
     else \
-        echo "⚠️  No local copy or token found, attempting direct install (may fail for private repos)"; \
+        echo "📦 Installing unified-cloud-services from GitHub"; \
         pip install --no-cache-dir "git+https://github.com/${GITHUB_USER}/unified-cloud-services.git"; \
     fi
 

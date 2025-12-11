@@ -4,8 +4,8 @@ pyarrow>=14.0.0
 fastapi>=0.104.0
 uvicorn>=0.24.0
 pydantic>=2.0.0
-# unified-cloud-services: Install from local copy if available (in external/unified-cloud-services/)
-# Otherwise, use git+https://github.com/IggyIkenna/unified-cloud-services.git with GITHUB_TOKEN
-# The Dockerfile handles this automatically
+# unified-cloud-services: Install from GitHub (see Dockerfile or local setup instructions)
+# For private repos, use: pip install "git+https://${GITHUB_TOKEN}@github.com/IggyIkenna/unified-cloud-services.git"
+# For public repos: pip install "git+https://github.com/IggyIkenna/unified-cloud-services.git"
 git+https://github.com/IggyIkenna/unified-cloud-services.git
 

@@ -359,19 +359,19 @@ The project is now a Python package, so you can install it locally with `pip ins
 #### Installation
 
 ```bash
-# Install unified-cloud-services first (if you have a local copy)
-# Option 1: From local copy
-pip install -e external/unified-cloud-services
-
-# Option 2: From GitHub (requires GITHUB_TOKEN for private repos)
-pip install "git+https://${GITHUB_TOKEN}@github.com/IggyIkenna/unified-cloud-services.git"
-
 # Install execution-services package in editable mode
+# This will automatically install unified-cloud-services from GitHub as a dependency
 pip install -e .
+
+# For private repos, you may need to install unified-cloud-services first:
+# pip install "git+https://${GITHUB_TOKEN}@github.com/IggyIkenna/unified-cloud-services.git"
+# Or configure git credentials for automatic authentication
 
 # This installs all dependencies and makes 'backend' importable
 # No need to set PYTHONPATH manually!
 ```
+
+**Note:** The Dockerfile automatically installs unified-cloud-services from GitHub (with token support for private repos) before running `pip install -e .`, ensuring all dependencies are satisfied.
 
 #### Running Locally
 

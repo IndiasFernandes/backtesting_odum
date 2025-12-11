@@ -26,9 +26,10 @@ dependencies = [
     "fastapi>=0.104.0",
     "uvicorn>=0.24.0",
     "pydantic>=2.0.0",
-    # unified-cloud-services: Install from local copy if available (in external/unified-cloud-services/)
-    # Otherwise, use git+https://github.com/IggyIkenna/unified-cloud-services.git with GITHUB_TOKEN
-    # Note: The Dockerfile handles this dependency separately
+    # unified-cloud-services: Installed from GitHub
+    # For private repos, Dockerfile installs with token before pip install -e .
+    # For local dev, configure git credentials or install separately first
+    "git+https://github.com/IggyIkenna/unified-cloud-services.git",
 ]
 
 [project.scripts]

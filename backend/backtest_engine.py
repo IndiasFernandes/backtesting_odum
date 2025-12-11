@@ -30,6 +30,15 @@ from backend.strategy import TempBacktestStrategy, TempBacktestStrategyConfig
 from backend.data_converter import DataConverter
 from backend.strategy_evaluator import StrategyEvaluator
 from backend.strategy_evaluator import StrategyEvaluator
+# Use built-in algorithms for testing
+try:
+    from nautilus_trader.examples.algorithms.twap import TWAPExecAlgorithm as BuiltinTWAPExecAlgorithm
+    from nautilus_trader.examples.algorithms.twap import TWAPExecAlgorithmConfig as BuiltinTWAPExecAlgorithmConfig
+    BUILTIN_TWAP_AVAILABLE = True
+except ImportError:
+    BUILTIN_TWAP_AVAILABLE = False
+
+# Fallback to custom algorithms if built-in not available
 from backend.execution_algorithms import (
     TWAPExecAlgorithm,
     VWAPExecAlgorithm,
@@ -1031,7 +1040,7 @@ class BacktestEngine:
         if not algo_type and not algorithms:
             return exec_algorithms
         
-        # Create execution algorithms
+        # Create execution algorithms - use built-in if available
         if algo_type:
             # Single algorithm from CLI or strategy config
             if algo_type == "NORMAL":
@@ -1039,7 +1048,13 @@ class BacktestEngine:
                 # Return empty list to indicate no exec algorithm
                 pass
             elif algo_type == "TWAP":
-                exec_algorithms.append(TWAPExecAlgorithm())
+                # Use built-in TWAP if available, otherwise custom
+                if BUILTIN_TWAP_AVAILABLE:
+                    exec_algorithms.append(BuiltinTWAPExecAlgorithm())
+                    print(f"Status: Using built-in TWAPExecAlgorithm")
+                else:
+                    exec_algorithms.append(TWAPExecAlgorithm())
+                    print(f"Status: Using custom TWAPExecAlgorithm")
             elif algo_type == "VWAP":
                 exec_algorithms.append(VWAPExecAlgorithm())
             elif algo_type == "ICEBERG":
@@ -1052,7 +1067,10 @@ class BacktestEngine:
                 algo_type = algo_config.get("type", "").upper()
                 if algo_config.get("enabled", True):
                     if algo_type == "TWAP":
-                        exec_algorithms.append(TWAPExecAlgorithm())
+                        if BUILTIN_TWAP_AVAILABLE:
+                            exec_algorithms.append(BuiltinTWAPExecAlgorithm())
+                        else:
+                            exec_algorithms.append(TWAPExecAlgorithm())
                     elif algo_type == "VWAP":
                         exec_algorithms.append(VWAPExecAlgorithm())
                     elif algo_type == "ICEBERG":
@@ -1639,29 +1657,27 @@ class BacktestEngine:
         # Create node
         node = BacktestNode(configs=[run_config])
         
-        # Add execution algorithms to the node before running
-        # Execution algorithms must be registered with the trader so they can handle orders
+        # Build engines first (this creates the engines so we can access them)
+        node.build()
+        
+        # Add execution algorithms to the engines before running
+        # Execution algorithms must be registered with the engines so they can handle orders
         if exec_algorithms:
             try:
-                # BacktestNode should have a method to add exec algorithms
-                # Try different approaches to register them
-                if hasattr(node, 'add_exec_algorithms'):
-                    node.add_exec_algorithms(exec_algorithms)
-                    print(f"Status: ✓ Added {len(exec_algorithms)} execution algorithm(s) via node.add_exec_algorithms()")
-                elif hasattr(node, 'add_exec_algorithm'):
+                # Get the engine from the node after building
+                engine = node.get_engine(run_config.id)
+                if engine:
                     for exec_algo in exec_algorithms:
-                        node.add_exec_algorithm(exec_algo)
-                        print(f"Status: ✓ Added execution algorithm: {exec_algo.__class__.__name__}")
+                        engine.add_exec_algorithm(exec_algo)
+                        print(f"Status: ✓ Added execution algorithm: {exec_algo.__class__.__name__} (ID: {exec_algo.id}) to engine")
                 else:
-                    # Try to access trader through node
-                    trader = getattr(node, '_trader', None) or getattr(node, 'trader', None)
-                    if trader:
-                        for exec_algo in exec_algorithms:
-                            trader.add_exec_algorithm(exec_algo)
-                            print(f"Status: ✓ Added execution algorithm: {exec_algo.__class__.__name__} via trader")
-                    else:
-                        print(f"Warning: Could not find way to register execution algorithms - they may not be active")
-                        print(f"Warning: Execution algorithms need to be registered before orders are submitted")
+                    print(f"Warning: Could not get engine {run_config.id} to add execution algorithms")
+                    # Try alternative: access through node's internal structure
+                    if hasattr(node, '_engines'):
+                        for engine_id, engine in node._engines.items():
+                            for exec_algo in exec_algorithms:
+                                engine.add_exec_algorithm(exec_algo)
+                                print(f"Status: ✓ Added execution algorithm via _engines dict")
             except Exception as e:
                 print(f"Warning: Could not add execution algorithms: {e}")
                 import traceback

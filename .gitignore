@@ -57,6 +57,9 @@ data_downloads/raw_tick_data/
 !.secrets/.gitkeep
 !.secrets/README.md
 
+# External dependencies (installed as packages)
+external/unified-cloud-services/
+
 # Documentation (excluded from repo)
 FUSE_SETUP.md
 SYSTEM_REVIEW_AND_AGENTS.md
