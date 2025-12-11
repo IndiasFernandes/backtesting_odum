@@ -1,0 +1,2 @@
+[console_scripts]
+run-backtest = backend.run_backtest:main
