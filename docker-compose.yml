@@ -9,6 +9,8 @@ services:
     ports:
       - "8000:8000"
     volumes:
+      # Mount backend code for development (changes reflected immediately)
+      - ./backend:/app/backend
       # Conditional: only mount local data_downloads if not using FUSE
       # If USE_GCS_FUSE=true, gcsfuse will mount to /app/data_downloads
       - ./data_downloads:/app/data_downloads:ro

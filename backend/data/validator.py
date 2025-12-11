@@ -2,7 +2,7 @@
 import os
 from datetime import datetime, date
 from pathlib import Path
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Optional
 
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.data import TradeTick, OrderBookDeltas

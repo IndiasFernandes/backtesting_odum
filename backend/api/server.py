@@ -1202,90 +1202,34 @@ async def get_configs() -> List[str]:
 async def get_venues() -> Dict[str, Any]:
     """
     Get list of available venues grouped by category.
-    Only returns venues that have actual data in GCS.
-    Uses unified-cloud-services for GCS access.
+    Returns all venues from registry immediately (fast, like before refactoring).
     """
-    from backend.instruments.registry import get_venues_by_category
-    import os
+    # Import registry config directly to avoid any import issues
+    from backend.instruments.registry import VENUES_CONFIG
     
-    bucket_name = os.getenv("UNIFIED_CLOUD_SERVICES_GCS_BUCKET")
-    if not bucket_name:
-        # If no bucket configured, return empty (or could return all venues)
-        return {"cefi": [], "tradfi": []}
+    # Build venue lists directly from config (fast, no function calls)
+    cefi_venues = [
+        {
+            "code": code,
+            "name": info["name"],
+            "types": info["types"],
+        }
+        for code, info in VENUES_CONFIG.get("cefi", {}).items()
+    ]
     
-    try:
-        # Use unified-cloud-services instead of direct google.cloud.storage
-        from backend.data.loader import UCSDataLoader
-        from unified_cloud_services.domain.standardized_service import StandardizedDomainCloudService
-        from unified_cloud_services.core.cloud_config import CloudTarget
-        
-        # Create UCS loader to get bucket name and target
-        ucs_loader = UCSDataLoader(bucket_name=bucket_name)
-        
-        # Create standardized service for market_data domain
-        standardized_service = StandardizedDomainCloudService(
-            domain="market_data",
-            cloud_target=ucs_loader.target
-        )
-        
-        # List all files in GCS to see what venues actually have data
-        all_files = standardized_service.list_gcs_files(prefix="raw_tick_data/by_date/")
-        
-        # Extract venue codes from filenames
-        venues_with_data = set()
-        for file_info in all_files:
-            filename = file_info['name'].split('/')[-1]
-            # Parse filename: VENUE:PRODUCT_TYPE:SYMBOL@SETTLEMENT.parquet
-            if ':' in filename and filename.endswith('.parquet'):
-                venue_part = filename.split(':')[0]
-                venues_with_data.add(venue_part)
-        
-        # Get all venues from registry
-        cefi_venues = get_venues_by_category("cefi")
-        tradfi_venues = get_venues_by_category("tradfi")
-        
-        # Filter to only venues with data
-        # Map GCS venue codes to registry venue codes
-        venue_mapping = {
-            "BINANCE-FUTURES": "BINANCE",
-            "BINANCE": "BINANCE",
-            "BYBIT": "BYBIT",
-            "OKX": "OKX",
-            "DERIBIT": "DERIBIT",
-            "CME": "CME",
-            "CBOE": "CBOE",
-            "NASDAQ": "NASDAQ",
-            "NYSE": "NYSE",
+    tradfi_venues = [
+        {
+            "code": code,
+            "name": info["name"],
+            "types": info["types"],
         }
-        
-        # Reverse mapping: GCS code -> registry code
-        registry_venues_with_data = set()
-        for gcs_venue in venues_with_data:
-            registry_venue = venue_mapping.get(gcs_venue, gcs_venue)
-            registry_venues_with_data.add(registry_venue)
-        
-        # Debug logging
-        import sys
-        print(f"🔍 GCS venues found: {sorted(venues_with_data)}", file=sys.stderr, flush=True)
-        print(f"🔍 Registry venues with data: {sorted(registry_venues_with_data)}", file=sys.stderr, flush=True)
-        
-        # Filter venues - only include if they have data
-        filtered_cefi = [v for v in cefi_venues if v["code"] in registry_venues_with_data]
-        filtered_tradfi = [v for v in tradfi_venues if v["code"] in registry_venues_with_data]
-        
-        print(f"🔍 Filtered CeFi: {[v['code'] for v in filtered_cefi]}", file=sys.stderr, flush=True)
-        print(f"🔍 Filtered TradFi: {[v['code'] for v in filtered_tradfi]}", file=sys.stderr, flush=True)
-        
-        return {
-            "cefi": filtered_cefi,
-            "tradfi": filtered_tradfi,
-        }
-    except Exception as e:
-        print(f"Error checking venues in GCS: {e}")
-        import traceback
-        traceback.print_exc()
-        # Fallback: return empty if we can't check
-        return {"cefi": [], "tradfi": []}
+        for code, info in VENUES_CONFIG.get("tradfi", {}).items()
+    ]
+    
+    return {
+        "cefi": cefi_venues,
+        "tradfi": tradfi_venues,
+    }
 
 
 @app.get("/api/instruments/types/{venue_code}")
@@ -1304,8 +1248,8 @@ async def get_instrument_types(venue_code: str) -> Dict[str, Any]:
 async def get_instruments(venue_code: str, product_type: str) -> Dict[str, Any]:
     """
     Get available instruments for a venue and product type.
-    
-    Only returns instruments that actually exist in GCS.
+    Returns registry instruments immediately (fast).
+    GCS filtering is optional and non-blocking.
     """
     from backend.instruments.registry import (
         get_common_instruments,
@@ -1318,64 +1262,59 @@ async def get_instruments(venue_code: str, product_type: str) -> Dict[str, Any]:
     venue_code_upper = venue_code.upper()
     product_type_upper = product_type.upper()
     
-    bucket_name = os.getenv("UNIFIED_CLOUD_SERVICES_GCS_BUCKET")
-    if not bucket_name:
-        return {
-            "venue_code": venue_code_upper,
-            "product_type": product_type_upper,
-            "instruments": [],
-        }
+    # Get instruments from registry immediately (fast path)
+    common = get_common_instruments(venue_code_upper, product_type_upper)
     
+    # Build instrument list from registry
     instruments = []
-    try:
-        # Use unified-cloud-services instead of direct google.cloud.storage
-        from backend.data.loader import UCSDataLoader
-        from unified_cloud_services.domain.standardized_service import StandardizedDomainCloudService
+    for symbol in common:
+        gcs_id = convert_to_gcs_format(venue_code_upper, product_type_upper, symbol)
+        nautilus_id = convert_to_nautilus_format(venue_code_upper, product_type_upper, symbol)
+        config_id = get_config_instrument_id(venue_code_upper, product_type_upper, symbol)
         
-        # Create UCS loader
-        ucs_loader = UCSDataLoader(bucket_name=bucket_name)
-        
-        # Create standardized service for market_data domain
-        standardized_service = StandardizedDomainCloudService(
-            domain="market_data",
-            cloud_target=ucs_loader.target
-        )
-        
-        # Get common instruments for this venue/type
-        common = get_common_instruments(venue_code_upper, product_type_upper)
-        
-        # List all files to check which instruments exist
-        all_files = standardized_service.list_gcs_files(prefix="raw_tick_data/by_date/")
-        
-        # Build set of existing instrument IDs from GCS
-        existing_instruments = set()
-        for file_info in all_files:
-            filename = file_info['name'].split('/')[-1]
-            if filename.endswith('.parquet'):
-                file_instrument_id = filename[:-8]  # Remove .parquet
-                existing_instruments.add(file_instrument_id)
-        
-        # Check which common instruments exist in GCS
-        for symbol in common:
-            gcs_id = convert_to_gcs_format(venue_code_upper, product_type_upper, symbol)
+        instruments.append({
+            "symbol": symbol,
+            "gcs_id": gcs_id,
+            "nautilus_id": nautilus_id,
+            "config_id": config_id,
+        })
+    
+    # Optionally filter by GCS availability (non-blocking)
+    bucket_name = os.getenv("UNIFIED_CLOUD_SERVICES_GCS_BUCKET")
+    if bucket_name and instruments:
+        try:
+            from backend.data.loader import UCSDataLoader
+            from unified_cloud_services.domain.standardized_service import StandardizedDomainCloudService
             
-            # Check if this instrument exists in GCS
-            if gcs_id in existing_instruments:
-                nautilus_id = convert_to_nautilus_format(venue_code_upper, product_type_upper, symbol)
-                config_id = get_config_instrument_id(venue_code_upper, product_type_upper, symbol)
-                
-                instruments.append({
-                    "symbol": symbol,
-                    "gcs_id": gcs_id,
-                    "nautilus_id": nautilus_id,
-                    "config_id": config_id,
-                })
-    except Exception as e:
-        print(f"Error checking instruments in GCS: {e}")
-        import traceback
-        traceback.print_exc()
-        # Return empty list on error
-        instruments = []
+            ucs_loader = UCSDataLoader(bucket_name=bucket_name)
+            standardized_service = StandardizedDomainCloudService(
+                domain="market_data",
+                cloud_target=ucs_loader.target
+            )
+            
+            # Quick check - limit results for speed
+            all_files = standardized_service.list_gcs_files(prefix="raw_tick_data/by_date/", max_results=200)
+            
+            # Build set of existing instrument IDs from GCS
+            existing_instruments = set()
+            for file_info in all_files:
+                filename = file_info['name'].split('/')[-1]
+                if filename.endswith('.parquet'):
+                    file_instrument_id = filename[:-8]  # Remove .parquet
+                    existing_instruments.add(file_instrument_id)
+            
+            # Filter instruments if we found matches in GCS
+            if existing_instruments:
+                filtered_instruments = []
+                for inst in instruments:
+                    if inst["gcs_id"] in existing_instruments:
+                        filtered_instruments.append(inst)
+                # Only use filtered list if we found matches, otherwise return all
+                if filtered_instruments:
+                    instruments = filtered_instruments
+        except Exception as e:
+            # If GCS check fails, return all registry instruments (fallback)
+            print(f"Note: Could not check GCS for instruments (non-critical): {e}")
     
     return {
         "venue_code": venue_code_upper,
