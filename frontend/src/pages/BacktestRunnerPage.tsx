@@ -3,6 +3,20 @@ import { useQuery } from '@tanstack/react-query'
 import { backtestApi, BacktestRunRequest, DataCheckResult, InstrumentInfo } from '../services/api'
 import { useToastContext } from '../components/Layout'
 
+// Helper function to get default parameters for execution algorithms
+const getDefaultParams = (algo: 'TWAP' | 'VWAP' | 'ICEBERG') => {
+  switch (algo) {
+    case 'TWAP':
+      return { horizon_secs: 60, interval_secs: 10 }
+    case 'VWAP':
+      return { horizon_secs: 60, intervals: 6 }
+    case 'ICEBERG':
+      return { visible_pct: 0.1 }
+    default:
+      return undefined
+  }
+}
+
 export default function BacktestRunnerPage() {
   const toast = useToastContext()
   
@@ -23,6 +37,8 @@ export default function BacktestRunnerPage() {
     export_ticks: false,
     snapshot_mode: 'both',
     data_source: 'gcs',
+    exec_algorithm: undefined,
+    exec_algorithm_params: undefined,
   })
 
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({})
@@ -35,34 +51,51 @@ export default function BacktestRunnerPage() {
     queryFn: () => backtestApi.getVenues(),
   })
 
-  // Fetch instrument types for selected venue
+  // Fetch instrument types for selected venue (only for CeFi)
   const { data: instrumentTypesData } = useQuery({
     queryKey: ['instrumentTypes', selectedVenue],
     queryFn: () => backtestApi.getInstrumentTypes(selectedVenue),
-    enabled: !!selectedVenue,
+    enabled: !!selectedVenue && venueCategory === 'cefi',
   })
 
-  // Fetch instruments for selected venue and product type
+  // Fetch instruments for selected venue and product type (only for CeFi)
   const { data: instrumentsData } = useQuery({
     queryKey: ['instruments', selectedVenue, selectedProductType],
     queryFn: () => backtestApi.getInstruments(selectedVenue, selectedProductType),
-    enabled: !!selectedVenue && !!selectedProductType,
+    enabled: !!selectedVenue && !!selectedProductType && venueCategory === 'cefi',
   })
 
   // Update formData when instrument selection changes
   useEffect(() => {
-    if (instrumentsData && selectedInstrument) {
+    // Only update if CeFi is selected and we have valid data
+    if (venueCategory === 'cefi' && instrumentsData && selectedInstrument) {
       const instrumentInfo = instrumentsData.instruments.find(
         (inst: InstrumentInfo) => inst.symbol === selectedInstrument
       )
       if (instrumentInfo) {
+        // Generate config filename from venue and instrument
+        const venueLower = selectedVenue.toLowerCase()
+        const symbolLower = selectedInstrument.replace('-', '').toLowerCase()
+        const productTypeLower = selectedProductType.toLowerCase()
+        const configName = productTypeLower === 'perpetual' || productTypeLower === 'futures'
+          ? `${venueLower}_futures_${symbolLower}_l2_trades_config.json`
+          : `${venueLower}_${symbolLower}_l2_trades_config.json`
+        
         setFormData(prev => ({
           ...prev,
           instrument: instrumentInfo.config_id,
+          config: configName, // Auto-generate config name
         }))
       }
+    } else if (venueCategory === 'tradfi' || !selectedInstrument) {
+      // Clear instrument in formData if TradFi or no selection
+      setFormData(prev => ({
+        ...prev,
+        instrument: '',
+        config: '',
+      }))
     }
-  }, [selectedInstrument, instrumentsData])
+  }, [selectedInstrument, venueCategory, instrumentsData, selectedVenue, selectedProductType])
 
   // Reset product type when venue changes
   useEffect(() => {
@@ -77,16 +110,26 @@ export default function BacktestRunnerPage() {
 
   // Reset instrument when product type changes
   useEffect(() => {
-    if (instrumentsData && instrumentsData.instruments.length > 0) {
+    // Only auto-select if we have valid data and it's CeFi
+    if (venueCategory === 'cefi' && instrumentsData && instrumentsData.instruments.length > 0) {
       // Prefer BTC-USDT if available, otherwise first instrument
       const preferred = instrumentsData.instruments.find((inst: InstrumentInfo) => inst.symbol === 'BTC-USDT')
         || instrumentsData.instruments[0]
       setSelectedInstrument(preferred.symbol)
+    } else if (venueCategory === 'tradfi' || !instrumentsData || instrumentsData.instruments.length === 0) {
+      // Clear instrument if TradFi or no data
+      setSelectedInstrument('')
     }
-  }, [selectedProductType, instrumentsData])
+  }, [selectedProductType, venueCategory, instrumentsData])
 
   // Real-time data validation when form changes
   useEffect(() => {
+    // Skip validation if TradFi is selected (no data available)
+    if (venueCategory === 'tradfi') {
+      setDataValidation(null)
+      return
+    }
+    
     // Wait for instrument to be set (either from formData or from selection)
     const currentInstrumentId = formData.instrument || (instrumentsData && selectedInstrument 
       ? instrumentsData.instruments.find((inst: InstrumentInfo) => inst.symbol === selectedInstrument)?.config_id 
@@ -242,18 +285,32 @@ export default function BacktestRunnerPage() {
     }
     
     // Config path format - use relative path from project root
-    // Only add prefix if config doesn't already have it
-    const configPath = formData.config.startsWith('external/') 
-      ? formData.config 
-      : `external/data_downloads/configs/${formData.config}`
+    // Only add prefix if config doesn't already have it and is not empty
+    let configPath = ''
+    if (formData.config) {
+      configPath = formData.config.startsWith('external/') 
+        ? formData.config 
+        : `external/data_downloads/configs/${formData.config}`
+    }
     
     const flags = [
       `--instrument ${formData.instrument}`,
-      `--dataset ${formData.dataset}`,
-      `--config ${configPath}`,
+    ]
+    
+    // Only include dataset if it's provided (usually auto-detected)
+    if (formData.dataset) {
+      flags.push(`--dataset ${formData.dataset}`)
+    }
+    
+    // Only include config if it's provided and not empty
+    if (configPath) {
+      flags.push(`--config ${configPath}`)
+    }
+    
+    flags.push(
       `--start ${formatForCLI(formData.start)}`,
       `--end ${formatForCLI(formData.end)}`,
-    ]
+    )
     
     if (formData.fast) flags.push('--fast')
     if (formData.report) flags.push('--report')
@@ -262,7 +319,14 @@ export default function BacktestRunnerPage() {
     if (formData.data_source && formData.data_source !== 'auto') {
       flags.push(`--data_source ${formData.data_source}`)
     }
-    // Note: dataset is auto-detected from time window, not included in CLI
+    
+    // Add execution algorithm if specified
+    if (formData.exec_algorithm) {
+      flags.push(`--exec_algorithm ${formData.exec_algorithm}`)
+      if (formData.exec_algorithm_params) {
+        flags.push(`--exec_algorithm_params '${JSON.stringify(formData.exec_algorithm_params)}'`)
+      }
+    }
     
     return `python backend/run_backtest.py ${flags.join(' \\\n  ')}`
   }
@@ -385,9 +449,16 @@ export default function BacktestRunnerPage() {
             <select
               value={venueCategory}
               onChange={(e) => {
-                setVenueCategory(e.target.value)
-                // Reset venue selection
-                const venues = e.target.value === 'cefi' 
+                const newCategory = e.target.value
+                setVenueCategory(newCategory)
+                
+                // Reset all selections when category changes
+                setSelectedVenue('')
+                setSelectedProductType('')
+                setSelectedInstrument('')
+                
+                // Only set venue if there are venues available
+                const venues = newCategory === 'cefi' 
                   ? venuesData?.cefi || []
                   : venuesData?.tradfi || []
                 if (venues.length > 0) {
@@ -399,6 +470,11 @@ export default function BacktestRunnerPage() {
               <option value="cefi">CeFi (Crypto)</option>
               <option value="tradfi">TradFi (Traditional Finance)</option>
             </select>
+            {venueCategory === 'tradfi' && (!venuesData?.tradfi || venuesData.tradfi.length === 0) && (
+              <p className="mt-1 text-sm text-yellow-400">
+                ⚠️ No TradFi venues available (no data in GCS bucket)
+              </p>
+            )}
           </div>
 
           {/* Venue Selection */}
@@ -408,15 +484,25 @@ export default function BacktestRunnerPage() {
             </label>
             <select
               value={selectedVenue}
-              onChange={(e) => setSelectedVenue(e.target.value)}
+              onChange={(e) => {
+                setSelectedVenue(e.target.value)
+                // Reset product type and instrument when venue changes
+                setSelectedProductType('')
+                setSelectedInstrument('')
+              }}
               className="w-full bg-dark-bg border border-dark-border rounded px-3 py-2 text-white"
-              disabled={!venuesData}
+              disabled={!venuesData || (venueCategory === 'tradfi' && (!venuesData?.tradfi || venuesData.tradfi.length === 0))}
             >
               <option value="">Select venue...</option>
               {(venueCategory === 'cefi' ? venuesData?.cefi : venuesData?.tradfi)?.map((venue: any) => (
                 <option key={venue.code} value={venue.code}>{venue.name}</option>
               ))}
             </select>
+            {venueCategory === 'tradfi' && (!venuesData?.tradfi || venuesData.tradfi.length === 0) && (
+              <p className="mt-1 text-sm text-gray-400">
+                No TradFi venues available. Please select CeFi category.
+              </p>
+            )}
           </div>
 
           {/* Product Type Selection */}
@@ -426,15 +512,24 @@ export default function BacktestRunnerPage() {
             </label>
             <select
               value={selectedProductType}
-              onChange={(e) => setSelectedProductType(e.target.value)}
+              onChange={(e) => {
+                setSelectedProductType(e.target.value)
+                // Reset instrument when product type changes
+                setSelectedInstrument('')
+              }}
               className="w-full bg-dark-bg border border-dark-border rounded px-3 py-2 text-white"
-              disabled={!instrumentTypesData || !selectedVenue}
+              disabled={!instrumentTypesData || !selectedVenue || (venueCategory === 'tradfi' && (!venuesData?.tradfi || venuesData.tradfi.length === 0))}
             >
               <option value="">Select type...</option>
               {instrumentTypesData?.types.map((type: string) => (
                 <option key={type} value={type}>{type}</option>
               ))}
             </select>
+            {venueCategory === 'tradfi' && (!venuesData?.tradfi || venuesData.tradfi.length === 0) && (
+              <p className="mt-1 text-sm text-gray-400">
+                Select a CeFi venue first.
+              </p>
+            )}
           </div>
 
           {/* Instrument Selection */}
@@ -448,7 +543,7 @@ export default function BacktestRunnerPage() {
               className={`w-full bg-dark-bg border rounded px-3 py-2 text-white ${
                 validationErrors.instrument ? 'border-red-500' : 'border-dark-border'
               }`}
-              disabled={!instrumentsData || !selectedProductType}
+              disabled={!instrumentsData || !selectedProductType || (venueCategory === 'tradfi' && (!venuesData?.tradfi || venuesData.tradfi.length === 0))}
               required
             >
               <option value="">Select instrument...</option>
@@ -461,7 +556,12 @@ export default function BacktestRunnerPage() {
             {validationErrors.instrument && (
               <p className="mt-1 text-sm text-red-400">{validationErrors.instrument}</p>
             )}
-            {instrumentsData && selectedInstrument && (
+            {venueCategory === 'tradfi' && (!venuesData?.tradfi || venuesData.tradfi.length === 0) && (
+              <p className="mt-1 text-sm text-gray-400">
+                No TradFi data available. Please select CeFi category.
+              </p>
+            )}
+            {instrumentsData && selectedInstrument && venueCategory === 'cefi' && (
               <div className="mt-2 text-xs text-gray-400 space-y-1">
                 <div>GCS ID: <span className="font-mono text-gray-300">
                   {instrumentsData.instruments.find((i: InstrumentInfo) => i.symbol === selectedInstrument)?.gcs_id}
@@ -591,6 +691,133 @@ export default function BacktestRunnerPage() {
               Choose data source: GCS uses cloud bucket, Local uses local files
             </p>
           </div>
+
+          {/* Execution Algorithm Selection */}
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              Execution Algorithm (Optional)
+            </label>
+            <select
+              value={formData.exec_algorithm || ''}
+              onChange={(e) => {
+                const algo = e.target.value as 'NORMAL' | 'TWAP' | 'VWAP' | 'ICEBERG' | ''
+                setFormData({ 
+                  ...formData, 
+                  exec_algorithm: algo || undefined,
+                  exec_algorithm_params: algo && algo !== 'NORMAL' ? getDefaultParams(algo) : undefined
+                })
+              }}
+              className="w-full bg-dark-bg border border-dark-border rounded px-3 py-2 text-white"
+            >
+              <option value="">None (Default Limit Orders)</option>
+              <option value="NORMAL">NORMAL - Market Orders</option>
+              <option value="TWAP">TWAP - Time-Weighted Average Price</option>
+              <option value="VWAP">VWAP - Volume-Weighted Average Price</option>
+              <option value="ICEBERG">ICEBERG - Iceberg Orders</option>
+            </select>
+            <p className="mt-1 text-xs text-gray-400">
+              Choose execution algorithm: NORMAL uses market orders, TWAP/VWAP split orders over time, ICEBERG hides order size
+            </p>
+          </div>
+
+          {/* Execution Algorithm Parameters */}
+          {formData.exec_algorithm && formData.exec_algorithm !== 'NORMAL' && (
+            <div className="bg-dark-surface border border-dark-border rounded p-4 space-y-3">
+              <h4 className="text-sm font-medium text-gray-300">Algorithm Parameters</h4>
+              {formData.exec_algorithm === 'TWAP' && (
+                <>
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">Horizon (seconds)</label>
+                    <input
+                      type="number"
+                      value={formData.exec_algorithm_params?.horizon_secs || 60}
+                      onChange={(e) => setFormData({
+                        ...formData,
+                        exec_algorithm_params: {
+                          ...formData.exec_algorithm_params,
+                          horizon_secs: parseInt(e.target.value) || 60
+                        }
+                      })}
+                      className="w-full bg-dark-bg border border-dark-border rounded px-2 py-1 text-white text-sm"
+                      min="1"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">Interval (seconds)</label>
+                    <input
+                      type="number"
+                      value={formData.exec_algorithm_params?.interval_secs || 10}
+                      onChange={(e) => setFormData({
+                        ...formData,
+                        exec_algorithm_params: {
+                          ...formData.exec_algorithm_params,
+                          interval_secs: parseInt(e.target.value) || 10
+                        }
+                      })}
+                      className="w-full bg-dark-bg border border-dark-border rounded px-2 py-1 text-white text-sm"
+                      min="1"
+                    />
+                  </div>
+                </>
+              )}
+              {formData.exec_algorithm === 'VWAP' && (
+                <>
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">Horizon (seconds)</label>
+                    <input
+                      type="number"
+                      value={formData.exec_algorithm_params?.horizon_secs || 60}
+                      onChange={(e) => setFormData({
+                        ...formData,
+                        exec_algorithm_params: {
+                          ...formData.exec_algorithm_params,
+                          horizon_secs: parseInt(e.target.value) || 60
+                        }
+                      })}
+                      className="w-full bg-dark-bg border border-dark-border rounded px-2 py-1 text-white text-sm"
+                      min="1"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">Intervals</label>
+                    <input
+                      type="number"
+                      value={formData.exec_algorithm_params?.intervals || 6}
+                      onChange={(e) => setFormData({
+                        ...formData,
+                        exec_algorithm_params: {
+                          ...formData.exec_algorithm_params,
+                          intervals: parseInt(e.target.value) || 6
+                        }
+                      })}
+                      className="w-full bg-dark-bg border border-dark-border rounded px-2 py-1 text-white text-sm"
+                      min="1"
+                    />
+                  </div>
+                </>
+              )}
+              {formData.exec_algorithm === 'ICEBERG' && (
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Visible Percentage (0.0 - 1.0)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={formData.exec_algorithm_params?.visible_pct || 0.1}
+                    onChange={(e) => setFormData({
+                      ...formData,
+                      exec_algorithm_params: {
+                        ...formData.exec_algorithm_params,
+                        visible_pct: parseFloat(e.target.value) || 0.1
+                      }
+                    })}
+                    className="w-full bg-dark-bg border border-dark-border rounded px-2 py-1 text-white text-sm"
+                    min="0.01"
+                    max="1.0"
+                  />
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="space-y-2">
             {validationErrors.mode && (

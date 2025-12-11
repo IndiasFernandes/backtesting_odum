@@ -13,8 +13,11 @@ RUN apt-get update && apt-get install -y \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements
-COPY backend/requirements.txt /app/requirements.txt
+# Copy pyproject.toml and README.md for package installation
+COPY pyproject.toml README.md /app/
+
+# Copy backend code (needed for package installation)
+COPY backend/ /app/backend/
 
 # Copy external directory first (may contain unified-cloud-services)
 COPY external/ /app/external/
@@ -24,27 +27,22 @@ COPY external/ /app/external/
 ARG GITHUB_TOKEN
 ARG GITHUB_USER=IggyIkenna
 
-# Install Python dependencies
-# Strategy: Try local copy first, then tokenized URL, then direct
+# Install unified-cloud-services first (if local copy exists)
 RUN if [ -d "/app/external/unified-cloud-services" ] && ([ -f "/app/external/unified-cloud-services/setup.py" ] || [ -f "/app/external/unified-cloud-services/pyproject.toml" ]); then \
         echo "✅ Using local unified-cloud-services package"; \
-        sed -i '/git+https:\/\/github.com\/IggyIkenna\/unified-cloud-services.git/d' /app/requirements.txt && \
-        pip install --no-cache-dir /app/external/unified-cloud-services && \
-        pip install --no-cache-dir -r requirements.txt; \
+        pip install --no-cache-dir /app/external/unified-cloud-services; \
     elif [ -n "$GITHUB_TOKEN" ]; then \
         echo "🔐 Using GitHub token for private repo access"; \
-        sed -i "s|git+https://github.com/${GITHUB_USER}/unified-cloud-services.git|git+https://${GITHUB_TOKEN}@github.com/${GITHUB_USER}/unified-cloud-services.git|g" /app/requirements.txt && \
-        pip install --no-cache-dir -r requirements.txt; \
+        pip install --no-cache-dir "git+https://${GITHUB_TOKEN}@github.com/${GITHUB_USER}/unified-cloud-services.git"; \
     else \
         echo "⚠️  No local copy or token found, attempting direct install (may fail for private repos)"; \
-        pip install --no-cache-dir -r requirements.txt; \
+        pip install --no-cache-dir "git+https://github.com/${GITHUB_USER}/unified-cloud-services.git"; \
     fi
 
-# Copy backend code
-COPY backend/ /app/backend/
+# Install execution-services package in editable mode (replaces PYTHONPATH)
+RUN pip install --no-cache-dir -e .
 
-# Set environment variables
-ENV PYTHONPATH=/app
+# Set environment variables (PYTHONPATH no longer needed - package is installed)
 ENV UNIFIED_CLOUD_LOCAL_PATH=/app/data_downloads
 ENV UNIFIED_CLOUD_SERVICES_USE_PARQUET=true
 ENV UNIFIED_CLOUD_SERVICES_USE_DIRECT_GCS=false

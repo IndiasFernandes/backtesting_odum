@@ -320,12 +320,12 @@ echo ""
 
 # 7. Environment Variables
 echo "=== 7. Environment Variables ==="
+# Note: PYTHONPATH no longer needed - package is installed via pip install -e .
 
 ENV_VARS=(
     "UNIFIED_CLOUD_LOCAL_PATH=/app/data_downloads"
     "UNIFIED_CLOUD_SERVICES_USE_PARQUET=true"
     "DATA_CATALOG_PATH=/app/backend/data/parquet"
-    "PYTHONPATH=/app"
 )
 
 for var in "${ENV_VARS[@]}"; do

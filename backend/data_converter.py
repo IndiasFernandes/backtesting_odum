@@ -52,8 +52,8 @@ class DataConverter:
             df = parquet_path.copy()
             source_info = f"DataFrame ({len(df)} rows)"
         else:
-            if not parquet_path.exists():
-                raise FileNotFoundError(f"Parquet file not found: {parquet_path}")
+        if not parquet_path.exists():
+            raise FileNotFoundError(f"Parquet file not found: {parquet_path}")
             source_info = str(parquet_path)
         
         # OPTIMIZATION: Check if data already exists in catalog for this file
@@ -71,8 +71,8 @@ class DataConverter:
                     if isinstance(parquet_path, pd.DataFrame):
                         print(f"Data already exists in catalog for {instrument_id} (DataFrame: {len(parquet_path)} rows) - skipping conversion for performance")
                     else:
-                        file_size_mb = parquet_path.stat().st_size / (1024 * 1024)
-                        print(f"Data already exists in catalog for {instrument_id} (file: {file_size_mb:.2f} MB) - skipping conversion for performance")
+                    file_size_mb = parquet_path.stat().st_size / (1024 * 1024)
+                    print(f"Data already exists in catalog for {instrument_id} (file: {file_size_mb:.2f} MB) - skipping conversion for performance")
                     return 0  # Return 0 to indicate no new data was written
             except Exception:
                 # If check fails, proceed with conversion
@@ -80,10 +80,10 @@ class DataConverter:
         
         # Read Parquet file if path provided, otherwise use DataFrame
         if not isinstance(parquet_path, pd.DataFrame):
-            # Read Parquet file using PyArrow directly (faster than pandas)
-            print(f"Reading Parquet file: {parquet_path}")
-            table = pq.read_table(parquet_path)
-            df = table.to_pandas()
+        # Read Parquet file using PyArrow directly (faster than pandas)
+        print(f"Reading Parquet file: {parquet_path}")
+        table = pq.read_table(parquet_path)
+        df = table.to_pandas()
         else:
             print(f"Using provided DataFrame: {len(df)} rows")
         
@@ -253,8 +253,8 @@ class DataConverter:
             df = parquet_path.copy()
             source_info = f"DataFrame ({len(df)} rows)"
         else:
-            if not parquet_path.exists():
-                raise FileNotFoundError(f"Parquet file not found: {parquet_path}")
+        if not parquet_path.exists():
+            raise FileNotFoundError(f"Parquet file not found: {parquet_path}")
             source_info = str(parquet_path)
         
         # OPTIMIZATION: Check if data already exists in catalog for this file
@@ -272,8 +272,8 @@ class DataConverter:
                     if isinstance(parquet_path, pd.DataFrame):
                         print(f"Orderbook data already exists in catalog for {instrument_id} (DataFrame: {len(parquet_path)} rows) - skipping conversion for performance")
                     else:
-                        file_size_mb = parquet_path.stat().st_size / (1024 * 1024)
-                        print(f"Orderbook data already exists in catalog for {instrument_id} (file: {file_size_mb:.2f} MB) - skipping conversion for performance")
+                    file_size_mb = parquet_path.stat().st_size / (1024 * 1024)
+                    print(f"Orderbook data already exists in catalog for {instrument_id} (file: {file_size_mb:.2f} MB) - skipping conversion for performance")
                     return 0  # Return 0 to indicate no new data was written
             except Exception:
                 # If check fails, proceed with conversion
@@ -281,9 +281,9 @@ class DataConverter:
         
         # Read Parquet file if path provided, otherwise use DataFrame
         if not isinstance(parquet_path, pd.DataFrame):
-            print(f"Reading order book Parquet file: {parquet_path}")
-            df = pd.read_parquet(parquet_path)
-            print(f"Loaded {len(df)} rows")
+        print(f"Reading order book Parquet file: {parquet_path}")
+        df = pd.read_parquet(parquet_path)
+        print(f"Loaded {len(df)} rows")
         else:
             print(f"Using provided DataFrame: {len(df)} rows")
         
@@ -332,10 +332,10 @@ class DataConverter:
                 bid_amount_cols.sort(key=lambda x: int(x.split('_')[-1]) if x.split('_')[-1].isdigit() else 999)
         else:
             # Sort Format 1 columns by index to maintain order
-            ask_price_cols.sort(key=lambda x: int(x.split('[')[1].split(']')[0]))
-            ask_amount_cols.sort(key=lambda x: int(x.split('[')[1].split(']')[0]))
-            bid_price_cols.sort(key=lambda x: int(x.split('[')[1].split(']')[0]))
-            bid_amount_cols.sort(key=lambda x: int(x.split('[')[1].split(']')[0]))
+        ask_price_cols.sort(key=lambda x: int(x.split('[')[1].split(']')[0]))
+        ask_amount_cols.sort(key=lambda x: int(x.split('[')[1].split(']')[0]))
+        bid_price_cols.sort(key=lambda x: int(x.split('[')[1].split(']')[0]))
+        bid_amount_cols.sort(key=lambda x: int(x.split('[')[1].split(']')[0]))
         
         if not ask_price_cols or not bid_price_cols:
             available_cols = ', '.join(df.columns.tolist()[:20])  # Show first 20 columns

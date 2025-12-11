@@ -1,0 +1,65 @@
+[build-system]
+requires = ["setuptools>=80.9.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "execution-services"
+version = "0.1.0"
+description = "Production-grade backtesting system built on NautilusTrader with external JSON configuration and GCS FUSE-ready architecture"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Ikenna Igboaka", email = "ikenna@odum-research.com"}
+]
+keywords = ["trading", "backtesting", "nautilus-trader", "market-data", "execution"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+]
+requires-python = ">=3.13"
+dependencies = [
+    "nautilus-trader>=1.220.0",
+    "pandas>=2.0.0",
+    "pyarrow>=14.0.0",
+    "fastapi>=0.104.0",
+    "uvicorn>=0.24.0",
+    "pydantic>=2.0.0",
+    # unified-cloud-services: Install from local copy if available (in external/unified-cloud-services/)
+    # Otherwise, use git+https://github.com/IggyIkenna/unified-cloud-services.git with GITHUB_TOKEN
+    # Note: The Dockerfile handles this dependency separately
+]
+
+[project.scripts]
+# CLI commands available after pip install -e .
+run-backtest = "backend.run_backtest:main"
+
+[tool.setuptools]
+packages = [
+    "backend",
+    "backend.api",
+    "backend.instruments",
+    "backend.utils",
+]
+include-package-data = true
+
+[tool.setuptools.package-data]
+backend = [
+    "scripts/**/*.sh",
+    "scripts/**/*.py",
+]
+
+[tool.black]
+line-length = 100
+target-version = ['py313']
+
+[tool.mypy]
+python_version = "3.13"
+warn_return_any = true
+disallow_untyped_defs = false
+
+[tool.pytest.ini_options]
+testpaths = ["backend/tests"]
+python_files = ["test_*.py"]
+

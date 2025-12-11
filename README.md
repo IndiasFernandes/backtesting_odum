@@ -347,19 +347,48 @@ Watch logs: `docker-compose logs -f backend`
 
 ## Development
 
-### Backend
+### Local Setup (Without Docker)
+
+The project is now a Python package, so you can install it locally with `pip install -e .` instead of manually setting PYTHONPATH.
+
+#### Prerequisites
+
+- Python 3.13+
+- pip
+
+#### Installation
 
 ```bash
-# Install dependencies
-cd backend
-pip install -r requirements.txt
+# Install unified-cloud-services first (if you have a local copy)
+# Option 1: From local copy
+pip install -e external/unified-cloud-services
 
-# Run CLI
-python backend/run_backtest.py --help
+# Option 2: From GitHub (requires GITHUB_TOKEN for private repos)
+pip install "git+https://${GITHUB_TOKEN}@github.com/IggyIkenna/unified-cloud-services.git"
+
+# Install execution-services package in editable mode
+pip install -e .
+
+# This installs all dependencies and makes 'backend' importable
+# No need to set PYTHONPATH manually!
+```
+
+#### Running Locally
+
+```bash
+# Run CLI (using the installed entry point)
+run-backtest --help
+
+# Or run directly
+python -m backend.run_backtest --help
 
 # Run API server
 python -m uvicorn backend.api.server:app --reload
 ```
+
+### Backend (Docker)
+
+The Dockerfile now uses `pip install -e .` instead of setting PYTHONPATH, making it consistent with local development.
 
 ### Frontend
 

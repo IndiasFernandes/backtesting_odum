@@ -1,10 +1,11 @@
 """Trade-driven backtest strategy implementation."""
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 from nautilus_trader.model.data import TradeTick
 from nautilus_trader.model.enums import OrderSide, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Quantity, Price
+from nautilus_trader.model.identifiers import ExecAlgorithmId
 from nautilus_trader.trading.strategy import Strategy, StrategyConfig
 from nautilus_trader.model.events import OrderFilled, OrderDenied, OrderRejected
 
@@ -13,6 +14,8 @@ class TempBacktestStrategyConfig(StrategyConfig):
     """Configuration for TempBacktestStrategy."""
     instrument_id: str
     submission_mode: str = "per_trade_tick"
+    use_exec_algorithm: bool = False
+    exec_algorithm: Optional[Dict[str, Any]] = None
 
 
 class TempBacktestStrategy(Strategy):
@@ -35,6 +38,9 @@ class TempBacktestStrategy(Strategy):
         # Store fill and rejection events for timeline building
         self._fill_events: List[Dict[str, Any]] = []
         self._rejection_events: List[Dict[str, Any]] = []
+        # Execution algorithm configuration
+        self._use_exec_algo = getattr(config, 'use_exec_algorithm', False)
+        self._exec_algo_config = getattr(config, 'exec_algorithm', None)
     
     def on_start(self) -> None:
         """Called when strategy starts."""
@@ -82,24 +88,81 @@ class TempBacktestStrategy(Strategy):
         # Use trade size for quantity (one order per trade row)
         quantity = tick.size
         
-        # Submit limit order at the EXACT trade price to execute exactly as the Parquet trade
-        # This ensures the order fills at the exact price from the trade data
-        order = self.order_factory.limit(
-            instrument_id=tick.instrument_id,
-            order_side=side,
-            quantity=quantity,
-            price=tick.price,  # Use exact trade price from Parquet data
-            time_in_force=TimeInForce.IOC,  # Immediate or Cancel - ensures immediate execution at trade price
-        )
+        # Check if execution algorithm should be used
+        exec_algo_type = None
+        if self._exec_algo_config:
+            if isinstance(self._exec_algo_config, dict):
+                exec_algo_type = self._exec_algo_config.get("type", "").upper()
+            else:
+                exec_algo_type = str(self._exec_algo_config).upper()
+        
+        # Handle NORMAL mode (market orders, no execution algorithm)
+        if exec_algo_type == "NORMAL":
+            # NORMAL execution: use market orders without any execution algorithm
+            order = self.order_factory.market(
+                instrument_id=tick.instrument_id,
+                order_side=side,
+                quantity=quantity,
+                time_in_force=TimeInForce.FOK,  # Fill or Kill
+            )
+            
+            self.log.info(
+                f"Submitted order #{self._order_count} (NORMAL mode - market order): "
+                f"{side.name} {quantity} @ {tick.price}"
+            )
+        elif self._use_exec_algo and self._exec_algo_config and exec_algo_type not in ("NORMAL", None):
+            # Execution algorithm mode
+            exec_algo_params = self._exec_algo_config.get("params", {}) if isinstance(self._exec_algo_config, dict) else {}
+            
+            # Create order with execution algorithm
+            exec_algo_id = ExecAlgorithmId(exec_algo_type)
+            
+            # For execution algorithms, we typically use market orders or limit orders
+            # The algorithm will handle splitting into child orders
+            if exec_algo_type == "ICEBERG":
+                # Iceberg can work with limit orders
+                order = self.order_factory.limit(
+                    instrument_id=tick.instrument_id,
+                    order_side=side,
+                    quantity=quantity,
+                    price=tick.price,
+                    time_in_force=TimeInForce.GTC,  # Good till cancelled for iceberg
+                    exec_algorithm_id=exec_algo_id,
+                    exec_algorithm_params=exec_algo_params,
+                )
+            else:
+                # TWAP and VWAP work with market orders
+                order = self.order_factory.market(
+                    instrument_id=tick.instrument_id,
+                    order_side=side,
+                    quantity=quantity,
+                    time_in_force=TimeInForce.FOK,  # Fill or Kill
+                    exec_algorithm_id=exec_algo_id,
+                    exec_algorithm_params=exec_algo_params,
+                )
+            
+            self.log.info(
+                f"Submitted order #{self._order_count} with {exec_algo_type} execution algorithm: "
+                f"{side.name} {quantity} @ {tick.price}"
+            )
+        else:
+            # Default behavior: Submit limit order at the EXACT trade price
+            # This ensures the order fills at the exact price from the trade data
+            order = self.order_factory.limit(
+                instrument_id=tick.instrument_id,
+                order_side=side,
+                quantity=quantity,
+                price=tick.price,  # Use exact trade price from Parquet data
+                time_in_force=TimeInForce.IOC,  # Immediate or Cancel - ensures immediate execution at trade price
+            )
+            
+            self.log.info(
+                f"Submitted order #{self._order_count}: {side.name} {quantity} @ {tick.price} "
+                f"(from trade tick {tick.trade_id}, aggressor={aggressor_side})"
+            )
         
         self.submit_order(order)
         self._order_count += 1
-        
-        # Use INFO level so we can see order submissions in logs
-        self.log.info(
-            f"Submitted order #{self._order_count}: {side.name} {quantity} @ {tick.price} "
-            f"(from trade tick {tick.trade_id}, aggressor={aggressor_side})"
-        )
     
     def on_order_filled(self, event: OrderFilled) -> None:
         """

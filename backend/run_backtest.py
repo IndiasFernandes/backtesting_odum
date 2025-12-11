@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """CLI entrypoint for running backtests."""
 import argparse
+import json
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -99,6 +100,21 @@ def parse_args():
         help="Do not close open positions at end of backtest (default: positions are closed)"
     )
     
+    parser.add_argument(
+        "--exec_algorithm",
+        type=str,
+        choices=["NORMAL", "TWAP", "VWAP", "ICEBERG"],
+        default=None,
+        help="Execution algorithm to use: NORMAL (market orders), TWAP, VWAP, or ICEBERG (optional - can also be specified in config)"
+    )
+    
+    parser.add_argument(
+        "--exec_algorithm_params",
+        type=str,
+        default=None,
+        help="Execution algorithm parameters as JSON string (e.g., '{\"horizon_secs\": 20, \"interval_secs\": 2.5}' for TWAP)"
+    )
+    
     return parser.parse_args()
 
 
@@ -141,6 +157,15 @@ def main():
     # Initialize catalog manager
     catalog_manager = CatalogManager()
     
+    # Parse execution algorithm parameters if provided
+    exec_algorithm_params = None
+    if args.exec_algorithm_params:
+        try:
+            exec_algorithm_params = json.loads(args.exec_algorithm_params)
+        except json.JSONDecodeError as e:
+            print(f"Error: Invalid JSON in --exec_algorithm_params: {e}", file=sys.stderr)
+            sys.exit(1)
+    
     # Create backtest engine
     engine = BacktestEngine(config_loader, catalog_manager)
     
@@ -155,7 +180,9 @@ def main():
             fast_mode=fast_mode,
             export_ticks=args.export_ticks,
             close_positions=close_positions,
-            data_source=args.data_source
+            data_source=args.data_source,
+            exec_algorithm_type=args.exec_algorithm,
+            exec_algorithm_params=exec_algorithm_params
         )
     except Exception as e:
         print(f"Error running backtest: {e}", file=sys.stderr)

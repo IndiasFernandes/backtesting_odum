@@ -120,6 +120,8 @@ class BacktestRunRequest(BaseModel):
     export_ticks: bool = False
     snapshot_mode: str = "both"
     data_source: str = "auto"  # 'local', 'gcs', or 'auto'
+    exec_algorithm: Optional[str] = None  # 'NORMAL', 'TWAP', 'VWAP', 'ICEBERG'
+    exec_algorithm_params: Optional[Dict[str, Any]] = None  # Algorithm-specific parameters
 
 
 class DataCheckRequest(BaseModel):
@@ -198,7 +200,9 @@ def _run_backtest_sync(
                 fast_mode=request.fast,
                 export_ticks=request.export_ticks,
                 close_positions=True,  # Default to closing positions
-                data_source=request.data_source
+                data_source=request.data_source,
+                exec_algorithm_type=request.exec_algorithm,
+                exec_algorithm_params=request.exec_algorithm_params
             )
             
             send_step("Saving results...")
@@ -291,7 +295,9 @@ async def run_backtest(request: BacktestRunRequest) -> Dict[str, Any]:
                 fast_mode=request.fast,
                 export_ticks=request.export_ticks,
                 close_positions=True,  # Default to closing positions
-                data_source=request.data_source
+                data_source=request.data_source,
+                exec_algorithm_type=request.exec_algorithm,
+                exec_algorithm_params=request.exec_algorithm_params
             )
             
             # Save results to disk (same as CLI)

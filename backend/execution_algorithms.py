@@ -1,22 +1,33 @@
 """
 Execution algorithms for order management.
 
-Implements TWAP, VWAP, and other execution patterns.
+Implements TWAP, VWAP, Iceberg, and other execution patterns using NautilusTrader ExecAlgorithm interface.
 """
-from typing import Optional, List, Dict
+from typing import Optional, Dict, Any
 from decimal import Decimal
-from datetime import timedelta, datetime
-from nautilus_trader.model.identifiers import InstrumentId
+from datetime import timedelta
+
+from nautilus_trader.execution.algorithm import ExecAlgorithm
+from nautilus_trader.model.identifiers import ExecAlgorithmId
+from nautilus_trader.model.orders.base import Order
 from nautilus_trader.model.enums import OrderSide, TimeInForce
-from nautilus_trader.model.objects import Quantity, Price
-from nautilus_trader.execution.algorithms import ExecAlgorithm, ExecAlgorithmConfig
-from nautilus_trader.model.events import OrderFilled
+from nautilus_trader.model.objects import Quantity
+from nautilus_trader.config import ExecAlgorithmConfig
 
 
-class TWAPExecAlgorithmConfig(ExecAlgorithmConfig):
-    """Configuration for TWAP execution algorithm."""
-    duration_seconds: int  # Total execution time in seconds
-    interval_seconds: int  # Time between child orders in seconds
+class TWAPExecAlgorithmConfig(ExecAlgorithmConfig, frozen=True):
+    """Configuration for TWAPExecAlgorithm."""
+    exec_algorithm_id: ExecAlgorithmId | None = ExecAlgorithmId("TWAP")
+
+
+class VWAPExecAlgorithmConfig(ExecAlgorithmConfig, frozen=True):
+    """Configuration for VWAPExecAlgorithm."""
+    exec_algorithm_id: ExecAlgorithmId | None = ExecAlgorithmId("VWAP")
+
+
+class IcebergExecAlgorithmConfig(ExecAlgorithmConfig, frozen=True):
+    """Configuration for IcebergExecAlgorithm."""
+    exec_algorithm_id: ExecAlgorithmId | None = ExecAlgorithmId("ICEBERG")
 
 
 class TWAPExecAlgorithm(ExecAlgorithm):
@@ -25,300 +36,297 @@ class TWAPExecAlgorithm(ExecAlgorithm):
     
     Splits large order into smaller orders executed evenly over time.
     
-    Example:
-        Total quantity: 10 BTC
-        Duration: 60 minutes
-        Interval: 5 minutes
-        -> 12 child orders of ~0.83 BTC each, executed every 5 minutes
+    Parameters:
+        horizon_secs: Total execution time in seconds
+        interval_secs: Time between child orders in seconds
     """
     
-    def __init__(self, config: TWAPExecAlgorithmConfig):
+    def __init__(self, config=None):
+        """Initialize TWAP execution algorithm."""
         super().__init__(config)
-        self.config = config
-        self.child_orders: List = []
-        self.start_time: Optional[datetime] = None
-        self.total_quantity: Optional[Quantity] = None
-        self.remaining_quantity: Optional[Quantity] = None
-        self.instrument_id: Optional[InstrumentId] = None
-        self.order_side: Optional[OrderSide] = None
-        self.limit_price: Optional[Price] = None
     
-    def execute(
-        self,
-        instrument_id: InstrumentId,
-        side: OrderSide,
-        quantity: Quantity,
-        price: Optional[Price] = None
-    ):
+    def on_order(self, order: Order) -> None:
         """
-        Execute order using TWAP algorithm.
+        Handle incoming primary order and spawn child orders.
         
         Args:
-            instrument_id: Instrument to trade
-            side: Buy or sell
-            quantity: Total order quantity
-            price: Optional limit price
+            order: The primary order to execute using TWAP
         """
-        self.instrument_id = instrument_id
-        self.order_side = side
-        self.total_quantity = quantity
-        self.remaining_quantity = quantity
-        self.limit_price = price
-        self.start_time = self.clock.utc_now()
+        # Log that we received an order
+        self.log.info(f"TWAP: Received order {order.client_order_id} with quantity {order.quantity}")
         
-        # Calculate number of child orders
-        num_orders = max(1, self.config.duration_seconds // self.config.interval_seconds)
-        child_size = quantity / Decimal(str(num_orders))
+        # Validate exec_algorithm_params
+        params = order.exec_algorithm_params or {}
+        horizon_secs = params.get("horizon_secs", 10)
+        interval_secs = params.get("interval_secs", 1)
         
-        self.log.info(
-            f"TWAP: Splitting {quantity} into {num_orders} orders of ~{child_size} "
-            f"over {self.config.duration_seconds}s"
-        )
-        
-        # Schedule child orders
-        for i in range(num_orders):
-            order_time = self.start_time + timedelta(seconds=i * self.config.interval_seconds)
-            
-            # Last order gets remainder
-            if i == num_orders - 1:
-                order_quantity = self.remaining_quantity
-            else:
-                order_quantity = child_size
-            
-            # Create child order
-            if price:
-                child_order = self.order_factory.limit(
-                    instrument_id=instrument_id,
-                    order_side=side,
-                    quantity=order_quantity,
-                    price=price,
-                    time_in_force=TimeInForce.GTC,  # Good till cancelled
-                )
-            else:
-                child_order = self.order_factory.market(
-                    instrument_id=instrument_id,
-                    order_side=side,
-                    quantity=order_quantity,
-                )
-            
-            # Schedule for execution
-            self.clock.schedule(
-                callback=lambda o=child_order: self._submit_child_order(o),
-                when=order_time
-            )
-    
-    def _submit_child_order(self, order):
-        """Submit scheduled child order."""
-        if self.remaining_quantity <= 0:
-            self.log.warning("TWAP: Remaining quantity is zero, skipping order")
+        if horizon_secs <= 0 or interval_secs <= 0:
+            self.log.error(f"TWAP: Invalid parameters - horizon_secs={horizon_secs}, interval_secs={interval_secs}")
             return
         
-        self.submit_order(order)
-        self.child_orders.append(order)
-        self.log.info(f"TWAP: Submitted child order {order.client_order_id}")
-    
-    def on_order_filled(self, event: OrderFilled):
-        """Track filled orders."""
-        if event.last_qty:
-            filled_qty = event.last_qty.as_decimal()
-            if self.remaining_quantity:
-                self.remaining_quantity -= filled_qty
-                self.log.info(
-                    f"TWAP: Order filled, remaining: {self.remaining_quantity}"
+        if interval_secs > horizon_secs:
+            self.log.warning(f"TWAP: interval_secs ({interval_secs}) > horizon_secs ({horizon_secs}), using interval_secs = horizon_secs")
+            interval_secs = horizon_secs
+        
+        # Calculate number of child orders
+        num_orders = max(1, int(horizon_secs / interval_secs))
+        child_qty = order.quantity / Decimal(str(num_orders))
+        
+        self.log.info(
+            f"TWAP: Splitting {order.quantity} into {num_orders} orders of ~{child_qty} "
+            f"over {horizon_secs}s (interval: {interval_secs}s)"
+        )
+        
+        # Spawn child orders evenly over time horizon
+        for i in range(num_orders):
+            delay_secs = i * interval_secs
+            
+            # Last order gets remainder to ensure full quantity is executed
+            if i == num_orders - 1:
+                # Calculate remaining quantity
+                remaining = order.quantity - (child_qty * Decimal(str(num_orders - 1)))
+                spawn_qty = remaining if remaining > 0 else child_qty
+            else:
+                spawn_qty = child_qty
+            
+            if spawn_qty <= 0:
+                continue
+            
+            # Schedule spawn using clock if delay is needed, otherwise spawn immediately
+            if delay_secs > 0:
+                # Schedule delayed spawn using clock - capture variables properly
+                spawn_time = self.clock.utc_now() + timedelta(seconds=delay_secs)
+                spawn_qty_capture = spawn_qty  # Capture in closure
+                self.clock.schedule(
+                    callback=lambda qty=spawn_qty_capture: self._spawn_twap_child(order, qty),
+                    when=spawn_time
                 )
-
-
-class VWAPExecAlgorithmConfig(ExecAlgorithmConfig):
-    """Configuration for VWAP execution algorithm."""
-    duration_seconds: int  # Total execution time
-    volume_profile: Dict[int, float]  # Volume distribution by hour (0-23)
+            else:
+                # Spawn immediately
+                self._spawn_twap_child(order, spawn_qty)
+    
+    def _spawn_twap_child(self, order: Order, quantity: Quantity) -> None:
+        """Helper to spawn TWAP child order."""
+        if order.is_limit_order() and order.price:
+            self.spawn_limit(
+                primary_order=order,
+                quantity=quantity,
+                price=order.price,
+            )
+        else:
+            self.spawn_market(
+                primary_order=order,
+                quantity=quantity,
+            )
 
 
 class VWAPExecAlgorithm(ExecAlgorithm):
     """
     Volume-Weighted Average Price execution algorithm.
     
-    Executes orders proportionally to historical volume distribution.
+    Executes orders proportionally to market volume distribution.
+    
+    Parameters:
+        horizon_secs: Total execution time in seconds
+        intervals: Number of intervals to split execution (default: 10)
     """
     
-    def __init__(self, config: VWAPExecAlgorithmConfig):
+    def __init__(self, config=None):
+        """Initialize VWAP execution algorithm."""
+        if config is None:
+            config = VWAPExecAlgorithmConfig()
         super().__init__(config)
-        self.config = config
-        self.child_orders: List = []
-        self.total_quantity: Optional[Quantity] = None
-        self.instrument_id: Optional[InstrumentId] = None
-        self.order_side: Optional[OrderSide] = None
     
-    def execute(
-        self,
-        instrument_id: InstrumentId,
-        side: OrderSide,
-        quantity: Quantity,
-        price: Optional[Price] = None
-    ):
+    def on_order(self, order: Order) -> None:
         """
-        Execute order using VWAP algorithm.
+        Handle incoming primary order and spawn child orders based on volume profile.
         
-        Uses historical volume profile to determine execution schedule.
+        Args:
+            order: The primary order to execute using VWAP
         """
-        self.instrument_id = instrument_id
-        self.order_side = side
-        self.total_quantity = quantity
+        # Log that we received an order
+        self.log.info(f"VWAP: Received order {order.client_order_id} with quantity {order.quantity}")
         
-        # Get volume profile for current time window
-        current_hour = self.clock.utc_now().hour
-        volume_distribution = self._get_volume_distribution(current_hour)
+        # Validate exec_algorithm_params
+        params = order.exec_algorithm_params or {}
+        horizon_secs = params.get("horizon_secs", 10)
+        intervals = params.get("intervals", 10)
         
-        if not volume_distribution:
-            # Fallback to TWAP if no volume profile
-            self.log.warning("VWAP: No volume profile, using uniform distribution")
-            volume_distribution = self._get_uniform_distribution()
+        if horizon_secs <= 0 or intervals <= 0:
+            self.log.error(f"VWAP: Invalid parameters - horizon_secs={horizon_secs}, intervals={intervals}")
+            return
         
-        # Normalize distribution
-        total_pct = sum(volume_distribution.values())
-        if total_pct == 0:
-            volume_distribution = self._get_uniform_distribution()
-            total_pct = sum(volume_distribution.values())
+        # For simplicity, use uniform distribution (can be enhanced with actual volume data)
+        # In production, you would query historical volume data and distribute accordingly
+        interval_secs = horizon_secs / intervals
+        child_qty = order.quantity / Decimal(str(intervals))
         
-        # Execute proportionally to volume distribution
-        start_time = self.clock.utc_now()
-        interval_seconds = self.config.duration_seconds // len(volume_distribution)
+        self.log.info(
+            f"VWAP: Splitting {order.quantity} into {intervals} orders of ~{child_qty} "
+            f"over {horizon_secs}s ({intervals} intervals)"
+        )
         
-        for i, (time_slot, volume_pct) in enumerate(sorted(volume_distribution.items())):
-            normalized_pct = volume_pct / total_pct if total_pct > 0 else 1.0 / len(volume_distribution)
-            child_quantity = quantity * Decimal(str(normalized_pct))
+        # Spawn child orders with uniform distribution
+        # In production, this would be weighted by actual volume distribution
+        for i in range(intervals):
+            delay_secs = i * interval_secs
             
-            if child_quantity <= 0:
+            # Last order gets remainder
+            if i == intervals - 1:
+                remaining = order.quantity - (child_qty * Decimal(str(intervals - 1)))
+                spawn_qty = remaining if remaining > 0 else child_qty
+            else:
+                spawn_qty = child_qty
+            
+            if spawn_qty <= 0:
                 continue
             
-            order_time = start_time + timedelta(seconds=i * interval_seconds)
-            
-            if price:
-                child_order = self.order_factory.limit(
-                    instrument_id=instrument_id,
-                    order_side=side,
-                    quantity=child_quantity,
-                    price=price,
-                    time_in_force=TimeInForce.GTC,
+            # Schedule spawn using clock if delay is needed, otherwise spawn immediately
+            if delay_secs > 0:
+                # Schedule delayed spawn using clock - capture variables properly
+                spawn_time = self.clock.utc_now() + timedelta(seconds=delay_secs)
+                spawn_qty_capture = spawn_qty  # Capture in closure
+                self.clock.schedule(
+                    callback=lambda qty=spawn_qty_capture: self._spawn_vwap_child(order, qty),
+                    when=spawn_time
                 )
             else:
-                child_order = self.order_factory.market(
-                    instrument_id=instrument_id,
-                    order_side=side,
-                    quantity=child_quantity,
-                )
-            
-            # Schedule for execution at time slot
-            self.clock.schedule(
-                callback=lambda o=child_order: self.submit_order(o),
-                when=order_time
+                # Spawn immediately
+                self._spawn_vwap_child(order, spawn_qty)
+    
+    def _spawn_vwap_child(self, order: Order, quantity: Quantity) -> None:
+        """Helper to spawn VWAP child order."""
+        if order.is_limit_order() and order.price:
+            self.spawn_limit(
+                primary_order=order,
+                quantity=quantity,
+                price=order.price,
+            )
+        else:
+            self.spawn_market(
+                primary_order=order,
+                quantity=quantity,
+            )
+
+
+class IcebergExecAlgorithm(ExecAlgorithm):
+    """
+    Iceberg execution algorithm.
+    
+    Shows only a small visible portion of the order, hiding the rest.
+    When visible portion fills, automatically shows next portion.
+    
+    Parameters:
+        visible_pct: Percentage of order to show at once (default: 0.1 = 10%)
+        horizon_secs: Maximum time to execute (optional, for timeout)
+    """
+    
+    def __init__(self, config=None):
+        """Initialize Iceberg execution algorithm."""
+        if config is None:
+            config = IcebergExecAlgorithmConfig()
+        super().__init__(config)
+        self._primary_orders: Dict[str, Order] = {}
+        self._remaining_qty: Dict[str, Quantity] = {}
+    
+    def on_order(self, order: Order) -> None:
+        """
+        Handle incoming primary order and spawn first visible portion.
+        
+        Args:
+            order: The primary order to execute using Iceberg
+        """
+        # Validate exec_algorithm_params
+        params = order.exec_algorithm_params or {}
+        visible_pct = params.get("visible_pct", 0.1)
+        
+        if visible_pct <= 0 or visible_pct > 1:
+            self.log.error(f"Iceberg: Invalid visible_pct={visible_pct}, must be between 0 and 1")
+            return
+        
+        # Store primary order info
+        order_id = str(order.client_order_id)
+        self._primary_orders[order_id] = order
+        self._remaining_qty[order_id] = order.quantity
+        
+        # Calculate visible quantity
+        visible_qty = order.quantity * Decimal(str(visible_pct))
+        
+        self.log.info(
+            f"Iceberg: Showing {visible_qty} ({visible_pct*100}%) of {order.quantity}, "
+            f"hiding {order.quantity - visible_qty}"
+        )
+        
+        # Spawn first visible order immediately
+        if order.is_limit_order() and order.price:
+            self.spawn_limit(
+                primary_order=order,
+                quantity=visible_qty,
+                price=order.price,
+            )
+        else:
+            self.spawn_market(
+                primary_order=order,
+                quantity=visible_qty,
             )
     
-    def _get_volume_distribution(self, hour: int) -> Dict[int, float]:
-        """Get volume distribution for hour."""
-        # Use configured volume profile or default
-        return self.config.volume_profile.get(hour, {})
-    
-    def _get_uniform_distribution(self) -> Dict[int, float]:
-        """Get uniform volume distribution (fallback)."""
-        num_slots = 12  # 12 time slots
-        return {i: 1.0 / num_slots for i in range(num_slots)}
-
-
-class AggressiveBuyPattern:
-    """
-    Aggressive buy order pattern.
-    
-    Executes immediately using market orders for fastest fill.
-    """
-    
-    def __init__(self, order_factory):
-        self.order_factory = order_factory
-    
-    def execute(
-        self,
-        instrument_id: InstrumentId,
-        quantity: Quantity
-    ):
-        """Execute aggressive buy order."""
-        order = self.order_factory.market(
-            instrument_id=instrument_id,
-            order_side=OrderSide.BUY,
-            quantity=quantity,
-        )
-        return order
-
-
-class PassiveBuyPattern:
-    """
-    Passive buy order pattern.
-    
-    Places limit orders at bid price, waits for fill.
-    """
-    
-    def __init__(self, order_factory, cache):
-        self.order_factory = order_factory
-        self.cache = cache
-    
-    def execute(
-        self,
-        instrument_id: InstrumentId,
-        quantity: Quantity
-    ):
-        """Execute passive buy order at bid."""
-        # Get current bid from order book
-        book = self.cache.order_book(instrument_id)
-        if book and book.best_bid_price():
-            bid_price = book.best_bid_price()
-        else:
-            # Fallback: use last trade price
-            last_trade = self.cache.trade_tick(instrument_id)
-            if last_trade:
-                bid_price = last_trade.price * Decimal("0.999")  # 0.1% below last trade
-            else:
-                raise ValueError(f"No price data available for {instrument_id}")
+    def on_order_filled(self, event) -> None:
+        """
+        Handle child order fill - spawn next visible portion if remaining.
         
-        order = self.order_factory.limit(
-            instrument_id=instrument_id,
-            order_side=OrderSide.BUY,
-            quantity=quantity,
-            price=bid_price,
-            time_in_force=TimeInForce.GTC,
-        )
-        return order
-
-
-class IcebergBuyPattern:
-    """
-    Iceberg buy order pattern.
-    
-    Shows small visible size, hides large size.
-    """
-    
-    def __init__(self, order_factory, visible_pct: float = 0.1):
-        self.order_factory = order_factory
-        self.visible_pct = visible_pct  # Percentage of order to show
-    
-    def execute(
-        self,
-        instrument_id: InstrumentId,
-        total_quantity: Quantity
-    ):
-        """Execute iceberg buy order."""
-        visible_size = total_quantity * Decimal(str(self.visible_pct))
-        hidden_size = total_quantity - visible_size
+        Args:
+            event: OrderFilled event
+        """
+        # Find primary order for this fill
+        order_id = None
+        for oid, primary_order in self._primary_orders.items():
+            # Check if this fill belongs to a child of this primary order
+            if hasattr(event, 'client_order_id'):
+                # In NautilusTrader, child orders reference the primary order
+                # We need to track which child orders belong to which primary
+                # For now, use a simple approach: check remaining quantity
+                if oid in self._remaining_qty:
+                    order_id = oid
+                    break
         
-        # Submit visible order
-        visible_order = self.order_factory.limit(
-            instrument_id=instrument_id,
-            order_side=OrderSide.BUY,
-            quantity=visible_size,
-            price=None,  # Will be set by strategy based on market
-        )
-        
-        return {
-            "visible_order": visible_order,
-            "hidden_size": hidden_size,
-            "total_quantity": total_quantity,
-        }
-
+        if order_id and order_id in self._remaining_qty:
+            primary_order = self._primary_orders[order_id]
+            remaining = self._remaining_qty[order_id]
+            
+            # Get filled quantity from event
+            filled_qty = event.last_qty if hasattr(event, 'last_qty') else None
+            if filled_qty:
+                remaining = remaining - filled_qty.as_decimal()
+                self._remaining_qty[order_id] = remaining
+                
+                # If there's remaining quantity, spawn next visible portion
+                if remaining > 0:
+                    params = primary_order.exec_algorithm_params or {}
+                    visible_pct = params.get("visible_pct", 0.1)
+                    next_visible_qty = remaining * Decimal(str(visible_pct))
+                    
+                    # Ensure we don't exceed remaining
+                    next_visible_qty = min(next_visible_qty, remaining)
+                    
+                    if next_visible_qty > 0:
+                        self.log.info(
+                            f"Iceberg: Spawning next visible portion: {next_visible_qty} "
+                            f"(remaining: {remaining})"
+                        )
+                        
+                        if primary_order.is_limit_order() and primary_order.price:
+                            self.spawn_limit(
+                                primary_order=primary_order,
+                                quantity=next_visible_qty,
+                                price=primary_order.price,
+                            )
+                        else:
+                            self.spawn_market(
+                                primary_order=primary_order,
+                                quantity=next_visible_qty,
+                            )
+                else:
+                    # Order fully filled, clean up
+                    self.log.info(f"Iceberg: Order {order_id} fully filled")
+                    del self._primary_orders[order_id]
+                    del self._remaining_qty[order_id]

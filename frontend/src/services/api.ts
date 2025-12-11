@@ -22,6 +22,13 @@ export interface BacktestRunRequest {
   export_ticks?: boolean
   snapshot_mode?: 'trades' | 'book' | 'both'
   data_source?: 'local' | 'gcs' | 'auto'
+  exec_algorithm?: 'NORMAL' | 'TWAP' | 'VWAP' | 'ICEBERG'
+  exec_algorithm_params?: {
+    horizon_secs?: number
+    interval_secs?: number
+    intervals?: number
+    visible_pct?: number
+  }
 }
 
 export interface DataCheckRequest {

@@ -30,6 +30,11 @@ from backend.strategy import TempBacktestStrategy, TempBacktestStrategyConfig
 from backend.data_converter import DataConverter
 from backend.strategy_evaluator import StrategyEvaluator
 from backend.strategy_evaluator import StrategyEvaluator
+from backend.execution_algorithms import (
+    TWAPExecAlgorithm,
+    VWAPExecAlgorithm,
+    IcebergExecAlgorithm,
+)
 from backend.instrument_utils import (
     convert_instrument_id_to_gcs_format,
     get_instrument_id_for_nautilus,
@@ -915,10 +920,16 @@ class BacktestEngine:
                         print(f"  Position details:")
                         for pos in open_positions:
                             try:
-                                if last_trade and hasattr(pos, 'unrealized_pnl'):
-                                    unrealized = float(pos.unrealized_pnl(last_trade.price).as_decimal())
-                                else:
-                                    unrealized = 0.0
+                                unrealized = 0.0
+                                if hasattr(pos, 'unrealized_pnl'):
+                                    # Try to get unrealized PnL if available
+                                    try:
+                                        # Get last trade price for calculation
+                                        last_trade = engine.cache.trade_tick(instrument_id)
+                                        if last_trade and hasattr(pos, 'unrealized_pnl'):
+                                            unrealized = float(pos.unrealized_pnl(last_trade.price).as_decimal())
+                                    except Exception:
+                                        pass
                                 qty = float(pos.quantity.as_decimal()) if pos.quantity else 0.0
                                 entry = float(pos.avg_px_open.as_decimal()) if pos.avg_px_open else 0.0
                                 print(f"    - {pos.side.name}: {qty} @ {entry} (unrealized: {unrealized:.2f})")
@@ -956,15 +967,104 @@ class BacktestEngine:
         strategy_config = config["strategy"]
         instrument_id = config["instrument"]["id"]
         
-        # Create strategy config with instrument ID
+        # Create strategy config with instrument ID and execution algorithm settings
+        strategy_config_dict = {
+            "instrument_id": instrument_id,
+            "submission_mode": strategy_config.get("submission_mode", "per_trade_tick"),
+        }
+        
+        # Add execution algorithm config if specified
+        if "exec_algorithm" in strategy_config:
+            exec_algo_config = strategy_config["exec_algorithm"]
+            exec_algo_type = exec_algo_config.get("type", "").upper() if isinstance(exec_algo_config, dict) else str(exec_algo_config).upper()
+            # NORMAL mode means no execution algorithm, but we still pass it to strategy
+            if exec_algo_type != "NORMAL":
+                strategy_config_dict["use_exec_algorithm"] = True
+            strategy_config_dict["exec_algorithm"] = exec_algo_config
+        
         return ImportableStrategyConfig(
             strategy_path="backend.strategy:TempBacktestStrategy",
             config_path="backend.strategy:TempBacktestStrategyConfig",
-            config={
-                "instrument_id": instrument_id,
-                "submission_mode": strategy_config.get("submission_mode", "per_trade_tick"),
-            },
+            config=strategy_config_dict,
         )
+    
+    def _build_exec_algorithms(
+        self,
+        config: Dict[str, Any],
+        exec_algorithm_type: Optional[str] = None,
+        exec_algorithm_params: Optional[Dict[str, Any]] = None
+    ) -> List:
+        """
+        Build execution algorithms from config or CLI args.
+        
+        Args:
+            config: Configuration dictionary
+            exec_algorithm_type: Execution algorithm type from CLI (overrides config)
+            exec_algorithm_params: Execution algorithm parameters from CLI (overrides config)
+        
+        Returns:
+            List of execution algorithm instances
+        """
+        exec_algorithms = []
+        
+        # Determine which exec algorithm to use (CLI takes precedence)
+        algo_type = None
+        algo_params = {}
+        
+        if exec_algorithm_type:
+            # CLI argument provided
+            algo_type = exec_algorithm_type.upper()
+            algo_params = exec_algorithm_params or {}
+        else:
+            # Check config
+            strategy_config = config.get("strategy", {})
+            exec_config = strategy_config.get("exec_algorithm")
+            if exec_config:
+                algo_type = exec_config.get("type", "").upper()
+                algo_params = exec_config.get("params", {})
+        
+        # Also check execution section in config
+        exec_section = config.get("execution", {})
+        algorithms = exec_section.get("algorithms", [])
+        
+        # If no exec algorithm specified, return empty list
+        if not algo_type and not algorithms:
+            return exec_algorithms
+        
+        # Create execution algorithms
+        if algo_type:
+            # Single algorithm from CLI or strategy config
+            if algo_type == "NORMAL":
+                # NORMAL mode: no execution algorithm, use regular market orders
+                # Return empty list to indicate no exec algorithm
+                pass
+            elif algo_type == "TWAP":
+                exec_algorithms.append(TWAPExecAlgorithm())
+            elif algo_type == "VWAP":
+                exec_algorithms.append(VWAPExecAlgorithm())
+            elif algo_type == "ICEBERG":
+                exec_algorithms.append(IcebergExecAlgorithm())
+            else:
+                print(f"Warning: Unknown execution algorithm type: {algo_type}")
+        else:
+            # Multiple algorithms from execution section
+            for algo_config in algorithms:
+                algo_type = algo_config.get("type", "").upper()
+                if algo_config.get("enabled", True):
+                    if algo_type == "TWAP":
+                        exec_algorithms.append(TWAPExecAlgorithm())
+                    elif algo_type == "VWAP":
+                        exec_algorithms.append(VWAPExecAlgorithm())
+                    elif algo_type == "ICEBERG":
+                        exec_algorithms.append(IcebergExecAlgorithm())
+                    else:
+                        print(f"Warning: Unknown execution algorithm type: {algo_type}")
+        
+        if exec_algorithms:
+            algo_names = [algo.__class__.__name__ for algo in exec_algorithms]
+            print(f"Status: ✓ Configured {len(exec_algorithms)} execution algorithm(s): {algo_names}")
+        
+        return exec_algorithms
     
     def run(
         self,
@@ -976,7 +1076,9 @@ class BacktestEngine:
         fast_mode: bool = False,
         export_ticks: bool = False,
         close_positions: bool = True,
-        data_source: str = "auto"
+        data_source: str = "auto",
+        exec_algorithm_type: Optional[str] = None,
+        exec_algorithm_params: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Run backtest.
@@ -1088,11 +1190,11 @@ class BacktestEngine:
         else:
             # VALIDATION: Only validate if data not in catalog
             print("Status: Validating data availability (data not in catalog)...")
-            validation_errors = []
-            validation_warnings = []
-            
+        validation_errors = []
+        validation_warnings = []
+        
             # Validate that dataset name matches the date in time window
-            dataset_date = None
+        dataset_date = None
         if dataset.startswith("day-"):
             try:
                 date_str = dataset.replace("day-", "")
@@ -1118,12 +1220,12 @@ class BacktestEngine:
             )
             validation_errors.append(error_msg)
             print(f"Status: ✗ VALIDATION ERROR: {error_msg}")
-            
+        
             # Fail fast if date mismatch
-            if validation_errors:
-                error_msg = "VALIDATION FAILED:\n" + "\n".join(validation_errors)
-                raise RuntimeError(error_msg)
-            
+        if validation_errors:
+            error_msg = "VALIDATION FAILED:\n" + "\n".join(validation_errors)
+            raise RuntimeError(error_msg)
+        
             # Only validate source files if data not in catalog
             if actual_data_source == "gcs":
                 # GCS validation - already done in form, but double-check if needed
@@ -1131,41 +1233,45 @@ class BacktestEngine:
             else:
                 # Local file validation - only if data not in catalog
                 base_path_str = os.getenv("UNIFIED_CLOUD_LOCAL_PATH") or config["environment"].get("UNIFIED_CLOUD_LOCAL_PATH", "/app/data_downloads")
-                base_path = Path(base_path_str).resolve()
-                data_catalog_config = config.get("data_catalog", {})
-                trades_path_pattern = data_catalog_config.get("trades_path")
-                book_path_pattern = data_catalog_config.get("book_snapshot_5_path")
-                
-                # Discover actual files (handle wildcards)
-                raw_trades_paths = []
-                raw_book_paths = []
-                
-                if trades_path_pattern:
-                    if "*" in trades_path_pattern:
-                        from backend.utils.paths import discover_data_files
-                        raw_trades_paths = discover_data_files(base_path, trades_path_pattern, instrument_id_str)
-                        print(f"Status: Discovered {len(raw_trades_paths)} trade file(s) matching pattern")
-                    else:
-                        path_str = str(trades_path_pattern)
-                        if path_str.startswith("data_downloads/"):
-                            path_str = path_str[len("data_downloads/"):]
-                        resolved = (base_path / path_str).resolve()
-                        if resolved.exists():
-                            raw_trades_paths = [resolved]
-                
-                if book_path_pattern:
-                    if "*" in book_path_pattern:
-                        from backend.utils.paths import discover_data_files
-                        raw_book_paths = discover_data_files(base_path, book_path_pattern, instrument_id_str)
-                        print(f"Status: Discovered {len(raw_book_paths)} book snapshot file(s) matching pattern")
-                    else:
-                        path_str = str(book_path_pattern)
-                        if path_str.startswith("data_downloads/"):
-                            path_str = path_str[len("data_downloads/"):]
-                        resolved = (base_path / path_str).resolve()
-                        if resolved.exists():
-                            raw_book_paths = [resolved]
-            
+        
+        # Ensure base_path_str is set (for both GCS and local paths)
+        if 'base_path_str' not in locals():
+            base_path_str = os.getenv("UNIFIED_CLOUD_LOCAL_PATH") or config["environment"].get("UNIFIED_CLOUD_LOCAL_PATH", "/app/data_downloads")
+        base_path = Path(base_path_str).resolve()
+        data_catalog_config = config.get("data_catalog", {})
+        trades_path_pattern = data_catalog_config.get("trades_path")
+        book_path_pattern = data_catalog_config.get("book_snapshot_5_path")
+        
+        # Discover actual files (handle wildcards)
+        raw_trades_paths = []
+        raw_book_paths = []
+        
+        if trades_path_pattern:
+            if "*" in trades_path_pattern:
+                from backend.utils.paths import discover_data_files
+                raw_trades_paths = discover_data_files(base_path, trades_path_pattern, instrument_id_str)
+                print(f"Status: Discovered {len(raw_trades_paths)} trade file(s) matching pattern")
+            else:
+                path_str = str(trades_path_pattern)
+                if path_str.startswith("data_downloads/"):
+                    path_str = path_str[len("data_downloads/"):]
+                resolved = (base_path / path_str).resolve()
+                if resolved.exists():
+                    raw_trades_paths = [resolved]
+        
+        if book_path_pattern:
+            if "*" in book_path_pattern:
+                from backend.utils.paths import discover_data_files
+                raw_book_paths = discover_data_files(base_path, book_path_pattern, instrument_id_str)
+                print(f"Status: Discovered {len(raw_book_paths)} book snapshot file(s) matching pattern")
+            else:
+                path_str = str(book_path_pattern)
+                if path_str.startswith("data_downloads/"):
+                    path_str = path_str[len("data_downloads/"):]
+                resolved = (base_path / path_str).resolve()
+                if resolved.exists():
+                    raw_book_paths = [resolved]
+        
             # Validate trades data availability (only if not in catalog)
             if not catalog_has_trades and snapshot_mode in ("trades", "both"):
                 # Skip local file validation if using GCS
@@ -1206,42 +1312,42 @@ class BacktestEngine:
                             f"  Expected location: {dataset_folder}\n"
                             f"  Please ensure the dataset folder exists before running the backtest."
                         )
-                    elif not raw_trades_paths:
-                        # Dataset exists but no trade files found
-                        validation_errors.append(
-                            f"ERROR: No trade data files found for dataset '{dataset}'\n"
-                            f"  Dataset folder exists: {dataset_folder}\n"
-                            f"  Pattern searched: {trades_path_pattern}\n"
-                            f"  Please ensure trade data files exist in the dataset folder."
-                        )
-                    else:
-                        # Check if files exist and have data (lenient validation - actual time window checked during catalog query)
-                        print(f"Status: Checking trade data file availability...")
-                        total_trades_found = 0
-                        for path in raw_trades_paths:
-                            if path.exists():
-                                try:
-                                    # Quick check: verify file has data (exact time range validation happens during catalog query)
-                                    import pyarrow.parquet as pq
-                                    table = pq.read_table(path, columns=[pq.read_schema(path).names[0]])  # Read just first column to check if file has data
-                                    if table.num_rows > 0:
-                                        print(f"Status: ✓ Trade data file {path.name} exists and has {table.num_rows} rows")
-                                        total_trades_found += 1
-                                    else:
-                                        validation_warnings.append(f"WARNING: Trade file {path.name} is empty")
-                                except Exception as e:
-                                    validation_warnings.append(f"WARNING: Could not verify trade file {path.name}: {e}")
-                        
-                        if total_trades_found == 0:
-                            validation_errors.append(
-                                f"ERROR: No trade data files found or files are empty for dataset '{dataset}'\n"
-                                f"  Dataset folder: {dataset_folder}\n"
-                                f"  Files checked: {[str(p) for p in raw_trades_paths]}\n"
-                                f"  Please ensure trade data files exist and contain data."
-                            )
-                        else:
-                            print(f"Status: ✓ Found {total_trades_found} trade file(s) with data (time window will be validated during catalog query)")
-            
+            elif not raw_trades_paths:
+                # Dataset exists but no trade files found
+                validation_errors.append(
+                    f"ERROR: No trade data files found for dataset '{dataset}'\n"
+                    f"  Dataset folder exists: {dataset_folder}\n"
+                    f"  Pattern searched: {trades_path_pattern}\n"
+                    f"  Please ensure trade data files exist in the dataset folder."
+                )
+            else:
+                # Check if files exist and have data (lenient validation - actual time window checked during catalog query)
+                print(f"Status: Checking trade data file availability...")
+                total_trades_found = 0
+                for path in raw_trades_paths:
+                    if path.exists():
+                        try:
+                            # Quick check: verify file has data (exact time range validation happens during catalog query)
+                            import pyarrow.parquet as pq
+                            table = pq.read_table(path, columns=[pq.read_schema(path).names[0]])  # Read just first column to check if file has data
+                            if table.num_rows > 0:
+                                print(f"Status: ✓ Trade data file {path.name} exists and has {table.num_rows} rows")
+                                total_trades_found += 1
+                            else:
+                                validation_warnings.append(f"WARNING: Trade file {path.name} is empty")
+                        except Exception as e:
+                            validation_warnings.append(f"WARNING: Could not verify trade file {path.name}: {e}")
+                
+                if total_trades_found == 0:
+                    validation_errors.append(
+                        f"ERROR: No trade data files found or files are empty for dataset '{dataset}'\n"
+                        f"  Dataset folder: {dataset_folder}\n"
+                        f"  Files checked: {[str(p) for p in raw_trades_paths]}\n"
+                        f"  Please ensure trade data files exist and contain data."
+                    )
+                else:
+                    print(f"Status: ✓ Found {total_trades_found} trade file(s) with data (time window will be validated during catalog query)")
+        
             # Validate book data availability (only if not in catalog)
             if not catalog_has_book and snapshot_mode in ("book", "both"):
                 # Skip local file validation if using GCS
@@ -1290,25 +1396,23 @@ class BacktestEngine:
                                 f"  Book snapshot mode requires the dataset folder to exist.\n"
                                 f"  Expected location: {dataset_folder}"
                             )
-                        else:
-                            # "both" mode - already reported in trades validation above
-                            pass
-                    elif not raw_book_paths:
-                        if snapshot_mode == "book":
-                            validation_errors.append(
-                                f"ERROR: Book snapshot mode requested but no book data files found\n"
-                                f"  Dataset folder exists: {dataset_folder}\n"
-                                f"  Pattern searched: {book_path_pattern}\n"
-                                f"  Please ensure book snapshot data files exist in the dataset folder."
-                            )
-                        else:
-                            validation_warnings.append(
-                                f"WARNING: Book snapshot data not found for dataset '{dataset}', will use trades-only mode\n"
-                                f"  Dataset folder: {dataset_folder}\n"
-                                f"  Pattern searched: {book_path_pattern}"
-                            )
-                    else:
-                        print(f"Status: ✓ Found {len(raw_book_paths)} book snapshot file(s)")
+                        # else: "both" mode - already reported in trades validation above
+            elif not raw_book_paths:
+                if snapshot_mode == "book":
+                    validation_errors.append(
+                        f"ERROR: Book snapshot mode requested but no book data files found\n"
+                        f"  Dataset folder exists: {dataset_folder}\n"
+                        f"  Pattern searched: {book_path_pattern}\n"
+                        f"  Please ensure book snapshot data files exist in the dataset folder."
+                    )
+                else:
+                    validation_warnings.append(
+                        f"WARNING: Book snapshot data not found for dataset '{dataset}', will use trades-only mode\n"
+                        f"  Dataset folder: {dataset_folder}\n"
+                        f"  Pattern searched: {book_path_pattern}"
+                    )
+            else:
+                print(f"Status: ✓ Found {len(raw_book_paths)} book snapshot file(s)")
             
             # Fail if validation errors exist (only if data not in catalog)
             if 'validation_errors' in locals() and validation_errors:
@@ -1472,19 +1576,54 @@ class BacktestEngine:
         # Build venue config - adjust book_type if no book data is available
         print("Status: Configuring venue and strategy...")
         venue_config = self._build_venue_config(config, has_book_data=has_book_data)
+        
+        # Build execution algorithms first to determine if NORMAL mode is requested
+        exec_algorithms = self._build_exec_algorithms(
+            config,
+            exec_algorithm_type=exec_algorithm_type,
+            exec_algorithm_params=exec_algorithm_params
+        )
+        
+        # Ensure strategy config knows about execution algorithm from CLI
+        # This is critical - strategy needs exec_algorithm config to create orders with exec_algorithm_id
+        if exec_algorithm_type:
+            if "strategy" not in config:
+                config["strategy"] = {}
+            # Set exec algorithm config for strategy
+            config["strategy"]["exec_algorithm"] = {
+                "type": exec_algorithm_type.upper(),
+                "params": exec_algorithm_params or {}
+            }
+        
         strategy_config = self._build_strategy_config(config)
         
         # Create BacktestRunConfig
         print("Status: Starting backtest execution...")
-        run_config = BacktestRunConfig(
-            engine=BacktestEngineConfig(
-                strategies=[strategy_config],
-            ),
-            venues=[venue_config],
-            data=data_configs,
-            start=start,
-            end=end,
+        engine_config = BacktestEngineConfig(
+            strategies=[strategy_config],
         )
+        
+        # Create run config - try to pass exec_algorithms if supported
+        run_config_kwargs = {
+            "engine": engine_config,
+            "venues": [venue_config],
+            "data": data_configs,
+            "start": start,
+            "end": end,
+        }
+        # Try to add exec_algorithms if the parameter exists
+        if exec_algorithms:
+            try:
+                # Check if BacktestRunConfig accepts exec_algorithms parameter
+                import inspect
+                sig = inspect.signature(BacktestRunConfig.__init__)
+                if 'exec_algorithms' in sig.parameters:
+                    run_config_kwargs["exec_algorithms"] = exec_algorithms
+                    print(f"Status: ✓ Adding execution algorithms to BacktestRunConfig")
+            except Exception:
+                pass  # Parameter doesn't exist, will add manually later
+        
+        run_config = BacktestRunConfig(**run_config_kwargs)
         
         # Execute backtest
         print("Status: Starting backtest execution...")
@@ -1492,8 +1631,42 @@ class BacktestEngine:
         print(f"Status:   Instrument: {instrument_id_str}")
         print(f"Status:   Data configs: {len(data_configs)}")
         print(f"Status:   Snapshot mode: {snapshot_mode}")
+        if exec_algorithms:
+            algo_names = [algo.__class__.__name__ for algo in exec_algorithms]
+            print(f"Status:   Execution algorithms: {algo_names}")
         print("Status: Executing backtest engine (processing ticks, this may take a while)...")
+        
+        # Create node
         node = BacktestNode(configs=[run_config])
+        
+        # Add execution algorithms to the node before running
+        # Execution algorithms must be registered with the trader so they can handle orders
+        if exec_algorithms:
+            try:
+                # BacktestNode should have a method to add exec algorithms
+                # Try different approaches to register them
+                if hasattr(node, 'add_exec_algorithms'):
+                    node.add_exec_algorithms(exec_algorithms)
+                    print(f"Status: ✓ Added {len(exec_algorithms)} execution algorithm(s) via node.add_exec_algorithms()")
+                elif hasattr(node, 'add_exec_algorithm'):
+                    for exec_algo in exec_algorithms:
+                        node.add_exec_algorithm(exec_algo)
+                        print(f"Status: ✓ Added execution algorithm: {exec_algo.__class__.__name__}")
+                else:
+                    # Try to access trader through node
+                    trader = getattr(node, '_trader', None) or getattr(node, 'trader', None)
+                    if trader:
+                        for exec_algo in exec_algorithms:
+                            trader.add_exec_algorithm(exec_algo)
+                            print(f"Status: ✓ Added execution algorithm: {exec_algo.__class__.__name__} via trader")
+                    else:
+                        print(f"Warning: Could not find way to register execution algorithms - they may not be active")
+                        print(f"Warning: Execution algorithms need to be registered before orders are submitted")
+            except Exception as e:
+                print(f"Warning: Could not add execution algorithms: {e}")
+                import traceback
+                traceback.print_exc()
+        
         results = node.run()
         
         # Extract results
