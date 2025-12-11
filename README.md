@@ -1,20 +1,44 @@
-# Odum Trader Backtest
+# Odum Execution Services
 
-Production-grade, containerized backtesting system built on NautilusTrader with external JSON configuration and GCS FUSE-ready architecture.
+Production-grade, containerized execution and backtesting platform built on NautilusTrader with external JSON configuration and GCS FUSE-ready architecture.
 
 ## Overview
 
-This system provides a complete backtesting solution using NautilusTrader's high-level API (`BacktestNode`) for orchestrating multiple backtest runs. All runtime parameters are configured via external JSON files—nothing is hardcoded. The system is designed to be portable, stateless, and ready for cloud storage integration via GCS FUSE mounts.
+This system provides a comprehensive execution services platform including:
+- **Backtesting**: Complete backtesting solution using NautilusTrader's high-level API (`BacktestNode`) for orchestrating multiple backtest runs
+- **Execution Algorithms**: Customizable execution algorithms (TWAP, VWAP, Iceberg) with web-based management interface
+- **Configuration Management**: Web-based editor for managing backtest configurations
+- **Data Management**: Automatic data validation, conversion, and catalog management for both local and GCS sources
+- **Performance Analysis**: Detailed performance metrics, timeline visualization, and comparison tools
+
+All runtime parameters are configured via external JSON files—nothing is hardcoded. The system is designed to be portable, stateless, and ready for cloud storage integration via GCS FUSE mounts.
 
 ## Key Features
 
+### Backtesting
 - **Trade-Driven Backtesting**: One order per trade row using `submission_mode="per_trade_tick"`
-- **External JSON Configuration**: All parameters (instrument, venue, data paths, time windows) defined in JSON
-- **Automatic Data Conversion**: Raw Parquet files automatically converted to NautilusTrader catalog format
 - **Fast & Report Modes**: Minimal summaries or full detailed results with timeline, orders, and tick exports
+- **Execution Algorithms**: Support for TWAP, VWAP, Iceberg, and custom execution algorithms
+- **Performance Analysis**: Comprehensive PnL tracking, drawdown analysis, and trade statistics
+
+### Execution Algorithms Management
+- **Web-Based Algorithm Editor**: View, edit, and validate execution algorithm code through the UI
+- **Built-in Algorithms**: TWAP (Time-Weighted Average Price), VWAP (Volume-Weighted Average Price), Iceberg
+- **Custom Algorithms**: Create and manage custom execution algorithms with validation
+- **Algorithm Testing**: Test algorithms before deploying to backtests
+
+### Configuration & Data Management
+- **External JSON Configuration**: All parameters (instrument, venue, data paths, time windows) defined in JSON
+- **Web-Based Config Editor**: Edit configuration files directly in the browser
+- **Automatic Data Conversion**: Raw Parquet files automatically converted to NautilusTrader catalog format
+- **Data Validation**: Pre-flight checks for data availability and time window coverage
+- **Multi-Source Support**: Local filesystem and GCS bucket data sources
+
+### Infrastructure
 - **GCS FUSE Integration**: Mount Google Cloud Storage buckets directly (see `FUSE_SETUP.md`)
 - **Docker Compose Stack**: Complete containerized backend (Python) and frontend (React/Vite)
-- **Production UI**: React dashboard with comparison tables, backtest runner, and config editor
+- **Production UI**: React dashboard with comparison tables, backtest runner, config editor, and algorithm manager
+- **RESTful API**: Comprehensive FastAPI backend with OpenAPI documentation
 
 ## Documentation
 
@@ -53,8 +77,12 @@ docker-compose ps
 ### Access UI
 
 - **Frontend**: http://localhost:5173
+  - **Comparison Page** (`/`): View and compare backtest results
+  - **Run Backtest** (`/run`): Execute new backtests with full configuration
+  - **Algorithms** (`/algorithms`): Manage execution algorithms (view, edit, validate)
+  - **Definitions** (`/definitions`): Edit backtest configuration files
 - **Backend API**: http://localhost:8000
-- **API Docs**: http://localhost:8000/docs
+- **API Docs**: http://localhost:8000/docs (Interactive Swagger UI)
 
 ### Docker Services
 
@@ -98,10 +126,37 @@ docker inspect --format='{{.State.Health.Status}}' nautilus-frontend
 
 #### Via Frontend UI (Recommended)
 
-1. Open http://localhost:5173/run
-2. Form is pre-filled with example values (Binance Futures BTCUSDT, May 23, 19:23-19:28 UTC)
-3. Click "Run Backtest" and watch status updates
-4. View results at http://localhost:5173/compare
+1. **Run Backtest**: Open http://localhost:5173/run
+   - Form is pre-filled with example values (Binance Futures BTCUSDT, May 23, 19:23-19:28 UTC)
+   - Select execution algorithm (TWAP, VWAP, Iceberg, or NORMAL)
+   - Configure algorithm parameters
+   - Click "Run Backtest" and watch real-time status updates
+2. **View Results**: Navigate to http://localhost:5173/compare
+   - Compare multiple backtest runs side-by-side
+   - View detailed performance metrics
+   - Analyze PnL charts and timeline
+
+### Manage Execution Algorithms
+
+#### Via Frontend UI
+
+1. **View Algorithms**: Open http://localhost:5173/algorithms
+   - Browse available execution algorithms (TWAP, VWAP, Iceberg)
+   - View algorithm code and parameters
+2. **Edit Algorithm**: 
+   - Click "Edit" on any algorithm
+   - Modify the code in the editor
+   - Click "Validate" to check syntax
+   - Click "Save" to update (backup created automatically)
+
+### Manage Configurations
+
+#### Via Frontend UI
+
+1. **Edit Configs**: Open http://localhost:5173/definitions
+   - Select a configuration file
+   - Edit JSON directly in the browser
+   - Save changes (validates JSON format)
 
 #### Via CLI
 
@@ -192,23 +247,52 @@ curl -X POST http://localhost:8000/api/backtest/run \
 │
 ├── backend/                     # Python backend
 │   ├── run_backtest.py         # CLI entrypoint
-│   ├── backtest_engine.py      # BacktestNode orchestration
-│   ├── config_loader.py        # JSON config loader
-│   ├── data_converter.py       # Parquet → Catalog converter
-│   ├── strategy.py             # Trade-driven strategy
-│   ├── strategy_evaluator.py   # Performance analysis
-│   ├── results.py              # Result serialization
+│   ├── backtest_engine.py      # Backward compatibility redirect
 │   ├── api/                    # REST API server
-│   │   └── server.py           # FastAPI endpoints
-│   ├── scripts/                # Backend scripts
-│   │   ├── start.sh            # Container startup script
-│   │   ├── mount_gcs.sh        # GCS FUSE mounting script
-│   │   ├── tests/              # Test scripts
-│   │   └── tools/              # Utility scripts
-│   ├── data/parquet/           # Converted catalog data (auto-generated)
+│   │   ├── server.py           # FastAPI main server
+│   │   ├── algorithm_manager.py  # Execution algorithm endpoints
+│   │   ├── data_checker.py     # Data validation endpoints
+│   │   └── mount_status.py     # GCS mount status
+│   ├── core/                   # Core backtest engine
+│   │   ├── engine.py           # Main BacktestEngine orchestrator
+│   │   └── node_builder.py    # NautilusTrader node configuration
+│   ├── config/                 # Configuration management
+│   │   └── loader.py          # JSON config loader
+│   ├── data/                   # Data management
+│   │   ├── catalog.py         # Catalog manager
+│   │   ├── converter.py       # Parquet → Catalog converter
+│   │   ├── loader.py          # UCS data loader
+│   │   ├── config_builder.py  # Data configuration builder
+│   │   └── validator.py       # Data validation
+│   ├── execution/              # Execution algorithms
+│   │   ├── algorithms.py      # TWAP, VWAP, Iceberg implementations
+│   │   └── router.py          # Smart order router
+│   ├── instruments/            # Instrument management
+│   │   ├── factory.py         # Instrument factory
+│   │   ├── registry.py        # Venue/instrument registry
+│   │   ├── utils.py           # Instrument utilities
+│   │   └── custom_instruments.py  # Custom instrument definitions
+│   ├── results/                # Result processing
+│   │   ├── serializer.py      # Result serialization
+│   │   ├── extractor.py       # Performance metrics extraction
+│   │   ├── timeline.py        # Timeline builder
+│   │   └── position_manager.py  # Position management
+│   ├── strategies/             # Trading strategies
+│   │   ├── base.py            # Base strategy implementation
+│   │   └── evaluator.py      # Performance evaluation
+│   ├── utils/                  # Utilities
+│   │   ├── paths.py          # Path resolution
+│   │   ├── validation.py     # Validation utilities
+│   │   └── log_capture.py    # Log capture
+│   ├── scripts/               # Backend scripts
+│   │   ├── start.sh           # Container startup script
+│   │   ├── mount_gcs.sh       # GCS FUSE mounting script
+│   │   ├── tests/             # Test scripts
+│   │   └── utils/            # Utility scripts
+│   ├── data/parquet/          # Converted catalog data (auto-generated)
 │   └── backtest_results/       # Backtest outputs
-│       ├── fast/               # Fast mode JSON summaries
-│       └── report/             # Report mode directories
+│       ├── fast/              # Fast mode JSON summaries
+│       └── report/            # Report mode directories
 │
 ├── frontend/                    # React frontend
 │   ├── src/
@@ -321,14 +405,29 @@ Format: `VENUE_INSTRUMENT_DATE_TIME_CONFIGHASH_UUID`
 
 ## API Endpoints
 
+### Backtesting
 - `GET /api/health` - Health check
-- `POST /api/backtest/run` - Execute backtest
+- `POST /api/backtest/run` - Execute backtest (supports streaming)
 - `GET /api/backtest/results` - List all results
 - `GET /api/backtest/results/{run_id}` - Get specific result
 - `GET /api/datasets` - Scan available datasets
+- `POST /api/data/check` - Validate data availability before backtest
+
+### Execution Algorithms
+- `GET /api/algorithms/` - List all available execution algorithms
+- `GET /api/algorithms/{algorithm_id}` - Get algorithm code and details
+- `POST /api/algorithms/validate` - Validate algorithm code syntax
+- `POST /api/algorithms/save` - Save algorithm code (creates backup)
+
+### Configuration Management
 - `GET /api/configs` - List config files
 - `GET /api/configs/{config_name}` - Get config content
 - `POST /api/configs` - Save config file
+
+### Venues & Instruments
+- `GET /api/venues` - List available venues (CeFi/TradFi)
+- `GET /api/venues/{venue_code}/instruments` - List instruments for venue
+- `GET /api/venues/{venue_code}/types` - Get instrument types for venue
 
 ## Environment Variables
 
