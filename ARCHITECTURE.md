@@ -64,7 +64,7 @@
 **Note**: Data conversion happens automatically on first run. Subsequent runs use cached catalog data, making them faster.
 
 ## Docker Compose Architecture
-- **backend**: Python 3.11 + NautilusTrader, mounts `data_downloads/` (read-only) and `backend/data/parquet/` (read-write); runs FastAPI server on port 8000; exposes CLI entrypoint `python backend/run_backtest.py ...`.
+- **backend**: Python 3.13 + NautilusTrader, mounts `data_downloads/` (read-only) and `backend/data/parquet/` (read-write); runs FastAPI server on port 8000; exposes CLI entrypoint `python backend/run_backtest.py ...`.
 - **frontend**: Vite + React + TypeScript + Tailwind; development server on port 5173; consumes JSON summaries/ticks via API proxy.
 - **redis** (optional): only enable if benchmarked to improve repeated catalog lookups/result caching; default disabled (profiles: batch-processing).
 - **Postgres**: intentionally omitted; file-based Parquet catalogs and JSON artifacts are sufficient per current design.
@@ -74,6 +74,11 @@
   - `backend/backtest_results/` (read-write, result storage)
   - `frontend/public/tickdata/` (read-write, tick exports)
   - `external/data_downloads/configs/` (read-only, config files)
+- **Scripts**: Located in `backend/scripts/`:
+  - `start.sh` - Container startup script (handles FUSE mounting and API server)
+  - `mount_gcs.sh` - GCS FUSE mounting script
+  - `tests/` - Test scripts for infrastructure and CLI alignment
+  - `tools/` - Utility scripts for data validation and GCS operations
 
 ## Caching & Redis Stance
 - Default: no Redis; Parquet + local filesystem is usually faster for bounded backtests. Enable Redis only after measuring cache hit benefits (e.g., repeated UI reads of large summary JSONs).
@@ -97,4 +102,4 @@
 
 - **BACKTEST_SPEC.md**: Complete CLI reference, JSON schema, strategy logic
 - **FRONTEND_UI_SPEC.md**: Frontend component architecture, UI patterns
-- **docs/REFERENCE.md**: Technical reference (data conversion, PnL calculation, testing, troubleshooting)
+- **FUSE_SETUP.md**: GCS FUSE integration guide

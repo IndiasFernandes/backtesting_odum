@@ -10,7 +10,7 @@ services:
         # Set via: GITHUB_TOKEN=your_token docker-compose build
         GITHUB_TOKEN: ${GITHUB_TOKEN:-}
         GITHUB_USER: ${GITHUB_USER:-IggyIkenna}
-    container_name: nautilus-backend
+    container_name: odum-backend
     ports:
       - "8000:8000"
     volumes:
@@ -30,6 +30,10 @@ services:
       - DATA_CATALOG_PATH=/app/backend/data/parquet
       # GCS credentials (defaults to .secrets/gcs/gcs-service-account.json)
       - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-/app/.secrets/gcs/gcs-service-account.json}
+      # GCS bucket for UCS (market data)
+      - UNIFIED_CLOUD_SERVICES_GCS_BUCKET=${UNIFIED_CLOUD_SERVICES_GCS_BUCKET:-}
+      # GCS bucket for backtest results (optional, can use same as above)
+      - GCS_BUCKET=${GCS_BUCKET:-${UNIFIED_CLOUD_SERVICES_GCS_BUCKET:-}}
       # GCS FUSE configuration (optional)
       - USE_GCS_FUSE=${USE_GCS_FUSE:-false}
       - GCS_FUSE_BUCKET=${GCS_FUSE_BUCKET:-}
@@ -60,7 +64,7 @@ services:
     build:
       context: .
       dockerfile: frontend/Dockerfile
-    container_name: nautilus-frontend
+    container_name: odum-frontend
     ports:
       - "5173:5173"
     volumes:
@@ -91,7 +95,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: nautilus-redis
+    container_name: odum-redis
     ports:
       - "6379:6379"
     volumes:

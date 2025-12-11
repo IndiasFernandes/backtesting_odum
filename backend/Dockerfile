@@ -62,8 +62,8 @@ RUN mkdir -p /app/backend/data/parquet \
 COPY backend/scripts/ /app/backend/scripts/
 
 # Make scripts executable
-RUN chmod +x /app/backend/run_backtest.py \
-    /app/backend/scripts/*.sh
+RUN chmod +x /app/backend/run_backtest.py && \
+    find /app/backend/scripts -name "*.sh" -type f -exec chmod +x {} \; || true
 
 # Default command (use start.sh for API server, or run_backtest.py for CLI)
 CMD ["bash", "/app/backend/scripts/start.sh"]

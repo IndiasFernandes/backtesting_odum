@@ -1,31 +1,34 @@
 # Backtest Specification
 
 ## Modes
-- Fast mode (default): summary JSON only, no tick export.
-- Full mode: summary + timeline + orders + ticks + metadata; exports ticks to `frontend/public/tickdata/<run_id>.json`.
+- **Fast mode** (`--fast`): Minimal JSON summary only, no tick export. Output: `backend/backtest_results/fast/<run_id>.json`.
+- **Report mode** (`--report` or default): Full details including summary + timeline + orders + ticks + metadata. Output: `backend/backtest_results/report/<run_id>/` directory. With `--export_ticks`, also exports ticks to `frontend/public/tickdata/<run_id>.json`.
 
 ## CLI (complete list)
 Example:
 ```
-python run_backtest.py \
+python backend/run_backtest.py \
   --instrument BTCUSDT \
-  --dataset example01 \
-  --config configs/btcusdt_config.json \
-  --start 2025-01-01T00:00:00Z \
-  --end 2025-01-01T01:00:00Z \
-  --full false \
-  --export_ticks false \
+  --dataset day-2023-05-23 \
+  --config external/data_downloads/configs/binance_futures_btcusdt_l2_trades_config.json \
+  --start 2023-05-23T02:00:00Z \
+  --end 2023-05-23T02:30:00Z \
+  --fast \
   --snapshot_mode both
 ```
+
 Flags:
-- `--instrument` string; logical instrument tag used by CLI/UI (must align with config instrument id).
-- `--dataset` string; dataset folder under `data_downloads/` to scan.
-- `--config` path; external JSON with ALL runtime params (see schema).
-- `--start` ISO UTC; inclusive start time window.
-- `--end` ISO UTC; inclusive end time window.
-- `--full` bool; enable full mode outputs.
-- `--export_ticks` bool; export tick JSON (implied true when `--full true`).
-- `--snapshot_mode` enum [`trades`,`book`,`both`]; controls ingestion of trades, `book_snapshot_5`, or both.
+- `--instrument` string (required); logical instrument tag used by CLI/UI (must align with config instrument id).
+- `--dataset` string (optional); dataset folder under `data_downloads/` to scan. Auto-detected from time window if not provided.
+- `--config` path (required); external JSON with ALL runtime params (see schema).
+- `--start` ISO UTC (required); inclusive start time window (e.g., `2023-05-23T02:00:00Z`).
+- `--end` ISO UTC (required); inclusive end time window (e.g., `2023-05-23T02:30:00Z`).
+- `--fast` flag; run in fast mode (minimal JSON summary only). Mutually exclusive with `--report`.
+- `--report` flag; run in report mode (full details: timeline, orders, ticks, metadata). Default if neither `--fast` nor `--report` specified.
+- `--export_ticks` flag; export tick JSON (requires `--report`).
+- `--snapshot_mode` enum [`trades`,`book`,`both`]; controls ingestion of trades, `book_snapshot_5`, or both. Default: `both`.
+- `--data_source` enum [`local`,`gcs`,`auto`]; data source selection. Default: `auto` (auto-detects).
+- `--no_close_positions` flag; do not close open positions at end of backtest (default: positions are closed).
 
 ## External JSON Configuration (authoritative, nothing hardcoded)
 ```json
@@ -119,13 +122,18 @@ Flags:
 - **Data paths in config**: Must point to raw Parquet files in `data_downloads/` structure (relative to `UNIFIED_CLOUD_LOCAL_PATH`).
 
 ## Outputs & Paths
-- Fast: `backend/backtest_results/fast/<run_id>.json`.
-- Report: `backend/backtest_results/report/<run_id>/summary.json`, `.../timeline.json`, `.../orders.json`, ticks at `frontend/public/tickdata/<run_id>.json`.
+- **Fast mode**: `backend/backtest_results/fast/<run_id>.json` (single JSON file with summary).
+- **Report mode**: `backend/backtest_results/report/<run_id>/` directory containing:
+  - `summary.json` - Summary metrics
+  - `timeline.json` - Event timeline
+  - `orders.json` - Order history
+  - `metadata.json` - Run metadata
+  - With `--export_ticks`: `frontend/public/tickdata/<run_id>.json` (tick data export)
 - Each run_id includes metadata (instrument, dataset, start/end, hash of config) for reproducibility.
 - Run ID format: `VENUE_INSTRUMENT_DATE_TIME_CONFIGHASH_UUID` (short and readable, e.g., `BNF_BTC_20230523_192312_018dd7_c54988`)
 
 ## Result JSON Shape
-- Fast (minimum):
+- **Fast mode** (single JSON file):
 ```json
 {
   "run_id": "string",
@@ -138,7 +146,8 @@ Flags:
     "orders": 0,
     "fills": 0,
     "pnl": 0.0,
-    "max_drawdown": 0.0
+    "max_drawdown": 0.0,
+    "trades": 0
   },
   "metadata": {
     "config_path": "string",
@@ -146,26 +155,13 @@ Flags:
   }
 }
 ```
-- Full (adds detail):
-```json
-{
-  "run_id": "string",
-  "mode": "full",
-  "instrument": "string",
-  "dataset": "string",
-  "start": "ISO8601",
-  "end": "ISO8601",
-  "summary": { "...": "same keys as fast" },
-  "timeline": [{ "ts": "ISO8601", "event": "Trade|Order|Fill", "data": {} }],
-  "orders": [{ "id": "string", "side": "buy|sell", "price": 0.0, "amount": 0.0, "status": "submitted|filled|cancelled" }],
-  "ticks_path": "frontend/public/tickdata/<run_id>.json",
-  "metadata": {
-    "config_path": "string",
-    "snapshot_mode": "both",
-    "catalog_root": "string"
-  }
-}
-```
+
+- **Report mode** (directory with multiple JSON files):
+  - `summary.json`: Same structure as fast mode summary
+  - `timeline.json`: Array of events
+  - `orders.json`: Array of orders
+  - `metadata.json`: Extended metadata including catalog paths, data source, etc.
+  - `ticks_path`: Path to tick export (if `--export_ticks` was used)
 
 ## Risk & Performance Constraints
 - Throttling: disabled or effectively unlimited (`1_000_000/sec`).

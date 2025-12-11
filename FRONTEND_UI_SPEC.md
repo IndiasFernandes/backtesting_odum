@@ -12,7 +12,7 @@
   - CLI preview panel (renders exact `python run_backtest.py ...` command).
   - Parameter form cards (instrument info, venue/account, strategy mode).
   - Run controls: Run button (debounced), mode toggle (fast/full), snapshot mode dropdown, validation errors.
-  - Results viewer: fast summary card (pnl, drawdown, fills), full-mode tabs (timeline list, orders table, tick chart with order markers, metadata panel).
+  - Results viewer: fast mode shows summary card (pnl, drawdown, fills, trades); report mode shows tabs (timeline list, orders table, tick chart with order markers, metadata panel).
   - Charts: tick graph with order markers; timeline chart for events; book depth snapshot overlay when available.
 - Right rail (optional): run history (lists `backend/backtest_results/`), run metadata, download links for summary/ticks.
 
@@ -22,20 +22,23 @@
 - Results: read summaries from `backend/backtest_results/`; full-mode tick JSON from `frontend/public/tickdata/`.
 
 ## Controls & Toggles
-- Full mode toggle (switch): when on, auto-enables tick export.
-- Tick export toggle: only active when full mode is selected.
-- Snapshot mode dropdown: `trades | book | both`.
+- Mode selector: Fast mode (minimal summary) or Report mode (full details). Default: Report mode.
+- Tick export toggle: only active when report mode is selected.
+- Snapshot mode dropdown: `trades | book | both` (default: `both`).
+- Data source selector: `local | gcs | auto` (default: `auto`).
 - Time window inputs: ISO UTC with validation against catalog bounds.
-- Dataset selector: list datasets by folder; show validation if required files absent.
+- Dataset selector: list datasets by folder; show validation if required files absent. Auto-detected from time window if not provided.
 - Config selector: file picker; show parsed summary (instrument, venue, precision).
 - Run button: executes via backend API; disabled if validation fails or run in flight.
+- Position closing toggle: option to keep positions open at end of backtest (default: positions are closed).
 
 ## CLI Preview
 - Render exact CLI line with current selections:
 ```
-python run_backtest.py --instrument <instrument> --dataset <dataset> --config <config> --start <start> --end <end> --full <true|false> --export_ticks <true|false> --snapshot_mode <mode>
+python backend/run_backtest.py --instrument <instrument> --dataset <dataset> --config <config> --start <start> --end <end> --fast|--report --export_ticks <true|false> --snapshot_mode <mode> --data_source <local|gcs|auto> --no_close_positions
 ```
-- Copy-to-clipboard and “open in terminal” hints.
+- Copy-to-clipboard and "open in terminal" hints.
+- Show which flags are active based on current UI selections.
 
 ## Performance & Architecture (React/Vite)
 - Data loading: stream and chunk large JSON; parse in Web Workers to keep UI responsive.
@@ -50,7 +53,7 @@ python run_backtest.py --instrument <instrument> --dataset <dataset> --config <c
 - ConfigSelector: file picker + parsed summary view.
 - TimeWindowPicker: UTC inputs with validation.
 - SnapshotModeSelect: enumerated dropdown.
-- ModeToggles: fast/full + tick export.
+- ModeToggles: fast/report mode selector + tick export (enabled only in report mode).
 - CLICommandPreview: renders command string; copy button.
 - RunButton: disabled while executing; shows status.
 - SummaryCards: pnl, orders, fills, drawdown.
@@ -67,12 +70,12 @@ python run_backtest.py --instrument <instrument> --dataset <dataset> --config <c
 - Errors: inline + toast; never auto-fall back to defaults.
 - Loading: skeletons for cards, spinners for charts, progress for tick parsing.
 - Empty states: clear instructions for missing datasets/configs.
-- Tooltips: describe fast vs full, tick export cost, snapshot modes.
+- Tooltips: describe fast vs report modes, tick export cost, snapshot modes, data source options.
 
 ## Integration Expectations
 - Backend API endpoints should mirror CLI flags; UI passes all parameters (no backend defaults).
 - All paths remain relative to mounted volumes; ready for future GCS FUSE mount without UI change.
-- Fast mode displays summary immediately; full mode fetches charts/ticks once available.
+- Fast mode displays summary immediately; report mode fetches charts/ticks once available.
 
 ## Security & Reliability
 - Do not execute arbitrary config contents; validate schema on load.

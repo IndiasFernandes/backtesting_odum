@@ -29,8 +29,9 @@ def parse_args():
     parser.add_argument(
         "--dataset",
         type=str,
-        required=True,
-        help="Dataset name"
+        required=False,
+        default=None,
+        help="Dataset name (optional - auto-detected from time window if not provided)"
     )
     
     parser.add_argument(
@@ -81,6 +82,14 @@ def parse_args():
         choices=["trades", "book", "both"],
         default="both",
         help="Snapshot mode: trades, book, or both"
+    )
+    
+    parser.add_argument(
+        "--data_source",
+        type=str,
+        choices=["local", "gcs", "auto"],
+        default="auto",
+        help="Data source: 'local' for local files, 'gcs' for GCS bucket, 'auto' to auto-detect (default: auto)"
     )
     
     parser.add_argument(
@@ -145,7 +154,8 @@ def main():
             snapshot_mode=args.snapshot_mode,
             fast_mode=fast_mode,
             export_ticks=args.export_ticks,
-            close_positions=close_positions
+            close_positions=close_positions,
+            data_source=args.data_source
         )
     except Exception as e:
         print(f"Error running backtest: {e}", file=sys.stderr)

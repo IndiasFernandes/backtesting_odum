@@ -23,7 +23,6 @@ export function ResultDetailModal({ result, onClose }: ResultDetailModalProps) {
   const [rejectedHasMore, setRejectedHasMore] = useState(false)
   const [rejectedOffset, setRejectedOffset] = useState(0)
   const [timeline, setTimeline] = useState<Array<{ ts: string; event: string; data: any }>>([])
-  const [timelineTotal, setTimelineTotal] = useState(0)
   const [timelineHasMore, setTimelineHasMore] = useState(false)
   const [timelineOffset, setTimelineOffset] = useState(0)
   const [tickData] = useState<Array<any>>([])
@@ -75,10 +74,9 @@ export function ResultDetailModal({ result, onClose }: ResultDetailModalProps) {
       // Load first page of timeline
       backtestApi.getReportResult(result.run_id, TIMELINE_PAGE_SIZE, 0)
         .then((fullResult) => {
-          if (fullResult.timeline) {
+          if (fullResult.timeline && Array.isArray(fullResult.timeline)) {
             setTimeline(fullResult.timeline)
             if (fullResult.timeline_pagination) {
-              setTimelineTotal(fullResult.timeline_pagination.total)
               setTimelineHasMore(fullResult.timeline_pagination.has_more)
             }
           }
@@ -130,25 +128,27 @@ export function ResultDetailModal({ result, onClose }: ResultDetailModalProps) {
     }
   }
   
-  const loadMoreTimeline = async () => {
-    if (loadingTimeline || !timelineHasMore) return
-    setLoadingTimeline(true)
-    const newOffset = timelineOffset + TIMELINE_PAGE_SIZE
-    try {
-      const response = await backtestApi.getReportResult(result!.run_id, TIMELINE_PAGE_SIZE, newOffset)
-      if (response.timeline) {
-        setTimeline(prev => [...prev, ...response.timeline])
-        if (response.timeline_pagination) {
-          setTimelineHasMore(response.timeline_pagination.has_more)
-        }
-      }
-      setTimelineOffset(newOffset)
-    } catch (err) {
-      console.error('Failed to load more timeline:', err)
-    } finally {
-      setLoadingTimeline(false)
-    }
-  }
+  // Timeline pagination - currently loads full timeline in one go (TIMELINE_PAGE_SIZE=50000)
+  // If needed, can add "Load More" button similar to fills/rejected orders
+  // const loadMoreTimeline = async () => {
+  //   if (loadingTimeline || !timelineHasMore || !result) return
+  //   setLoadingTimeline(true)
+  //   const newOffset = timelineOffset + TIMELINE_PAGE_SIZE
+  //   try {
+  //     const response = await backtestApi.getReportResult(result.run_id, TIMELINE_PAGE_SIZE, newOffset)
+  //     if (response.timeline && Array.isArray(response.timeline)) {
+  //       setTimeline(prev => [...prev, ...response.timeline!])
+  //       if (response.timeline_pagination) {
+  //         setTimelineHasMore(response.timeline_pagination.has_more)
+  //       }
+  //     }
+  //     setTimelineOffset(newOffset)
+  //   } catch (err) {
+  //     console.error('Failed to load more timeline:', err)
+  //   } finally {
+  //     setLoadingTimeline(false)
+  //   }
+  // }
 
   if (!result) return null
 
@@ -396,7 +396,16 @@ export function ResultDetailModal({ result, onClose }: ResultDetailModalProps) {
               {loadingFills ? (
                 <div className="text-gray-400">Loading tick chart...</div>
               ) : (
-                <TickPriceChart tickData={tickData} fills={fills} />
+                <TickPriceChart 
+                  tickData={tickData} 
+                  fills={fills.map(f => ({
+                    order_id: f.order_id || f.id || '',
+                    price: f.price,
+                    quantity: f.quantity || f.amount || 0,
+                    side: f.side || 'unknown',
+                    timestamp: f.timestamp || ''
+                  }))} 
+                />
               )}
             </div>
           )}
@@ -557,11 +566,11 @@ export function ResultDetailModal({ result, onClose }: ResultDetailModalProps) {
                             </thead>
                             <tbody className="divide-y divide-dark-border">
                               {rejectedOrders.rejected_orders.map((order) => {
-                                const orderTime = order.timestamp ? (() => {
+                                const orderTime = (order as any).timestamp ? (() => {
                                   try {
-                                    return format(parseISO(order.timestamp), 'HH:mm:ss.SSS')
+                                    return format(parseISO((order as any).timestamp), 'HH:mm:ss.SSS')
                                   } catch {
-                                    return order.timestamp
+                                    return (order as any).timestamp
                                   }
                                 })() : 'N/A'
                                 return (

@@ -30,6 +30,19 @@ from backend.strategy import TempBacktestStrategy, TempBacktestStrategyConfig
 from backend.data_converter import DataConverter
 from backend.strategy_evaluator import StrategyEvaluator
 from backend.strategy_evaluator import StrategyEvaluator
+from backend.instrument_utils import (
+    convert_instrument_id_to_gcs_format,
+    get_instrument_id_for_nautilus,
+    normalize_venue_name
+)
+
+# Optional UCS import
+try:
+    from backend.ucs_data_loader import UCSDataLoader
+    UCS_AVAILABLE = True
+except ImportError:
+    UCS_AVAILABLE = False
+    UCSDataLoader = None
 
 
 class BacktestEngine:
@@ -46,6 +59,7 @@ class BacktestEngine:
         self.config_loader = config_loader
         self.catalog_manager = catalog_manager
         self.catalog: Optional[ParquetDataCatalog] = None
+        self.ucs_loader: Optional[UCSDataLoader] = None
     
     def _create_and_register_instrument(self, config: Dict[str, Any]) -> InstrumentId:
         """
@@ -70,7 +84,11 @@ class BacktestEngine:
         instrument_config = config["instrument"]
         venue_config = config["venue"]
         
-        instrument_id = InstrumentId.from_str(instrument_config["id"])
+        # Get instrument ID in NautilusTrader format
+        config_instrument_id = instrument_config["id"]
+        venue_name = venue_config["name"]
+        nautilus_instrument_id_str = get_instrument_id_for_nautilus(config_instrument_id, venue_name)
+        instrument_id = InstrumentId.from_str(nautilus_instrument_id_str)
         
         # Check if instrument already exists in catalog
         try:
@@ -168,8 +186,13 @@ class BacktestEngine:
             print(f"Warning: book_type=L2_MBP requested but no book data available. Using L1_MBP for trades-only mode.")
             book_type = "L1_MBP"
         
+        # Normalize venue name for NautilusTrader
+        venue_name_raw = venue_config["name"]
+        is_futures = "FUTURES" in venue_name_raw.upper() or venue_config.get("book_type") == "L2_MBP"
+        normalized_venue = normalize_venue_name(venue_name_raw, is_futures=is_futures)
+        
         return BacktestVenueConfig(
-            name=venue_config["name"],
+            name=normalized_venue,
             oms_type=venue_config["oms_type"],
             account_type=venue_config["account_type"],
             starting_balances=[f"{starting_balance} {base_currency}"],
@@ -186,6 +209,8 @@ class BacktestEngine:
     ) -> tuple[List[BacktestDataConfig], bool]:
         """
         Build BacktestDataConfig list and check if book data is available.
+        
+        Supports both local files and GCS bucket based on data_source config.
         
         Returns:
             Tuple of (data_configs list, has_book_data bool)
@@ -205,6 +230,29 @@ class BacktestEngine:
             self.catalog = ParquetDataCatalog(str(catalog_path))
         
         instrument = InstrumentId.from_str(instrument_id)
+        
+        # Determine data source: 'local', 'gcs', or 'auto'
+        data_source = config.get("data_source", "auto").lower()
+        if data_source not in ("local", "gcs", "auto"):
+            print(f"Warning: Invalid data_source '{data_source}', defaulting to 'auto'")
+            data_source = "auto"
+        
+        # Initialize UCS loader if needed
+        if data_source in ("gcs", "auto") and UCS_AVAILABLE:
+            if self.ucs_loader is None:
+                try:
+                    self.ucs_loader = UCSDataLoader()
+                    print(f"✅ UCS Data Loader initialized (data_source: {data_source})")
+                    # If auto and UCS available, use GCS
+                    if data_source == "auto":
+                        data_source = "gcs"
+                except Exception as e:
+                    print(f"⚠️  Failed to initialize UCS loader: {e}")
+                    if data_source == "gcs":
+                        raise RuntimeError(f"Cannot use GCS data source: {e}")
+                    # For 'auto', fall back to local
+                    data_source = "local"
+                    print(f"   Falling back to local files")
         
         # Get raw file paths from config
         data_catalog_config = config.get("data_catalog", {})
@@ -301,54 +349,110 @@ class BacktestEngine:
         
         from backend.data_converter import DataConverter
         instrument_config = config["instrument"]
+        venue_config = config["venue"]
         price_precision = instrument_config.get("price_precision", 2)
         size_precision = instrument_config.get("size_precision", 3)
         
         # Process trades
         # OPTIMIZATION: Check if data already exists in catalog before converting
         # This avoids re-converting unchanged files (much faster on subsequent runs)
-        if raw_trades_paths and snapshot_mode in ("trades", "both"):
+        if snapshot_mode in ("trades", "both"):
             total_trades_count = 0
-            for raw_trades_path in raw_trades_paths:
-                if raw_trades_path.exists():
+            
+            # Check if data already exists in catalog
+            try:
+                existing_check = self.catalog.query(
+                    data_cls=TradeTick,
+                    instrument_ids=[instrument],
+                    start=start,
+                    end=end,
+                    limit=1
+                )
+                if existing_check:
+                    print(f"✅ Trades data already exists in catalog for time window")
+                    total_trades_count = 1  # Mark as existing
+            except Exception:
+                pass  # No data exists, proceed with conversion
+                        
+            # Load and convert data if not in catalog
+            if total_trades_count == 0:
+                if data_source == "gcs" and self.ucs_loader:
+                    # Load from GCS
                     try:
-                        # Check if data already exists in catalog for this file's time range
-                        # Read file metadata to get approximate time range
-                        file_mtime = raw_trades_path.stat().st_mtime
+                        # Extract date from start timestamp
+                        date_str = start.strftime("%Y-%m-%d")
                         
-                        # Quick check: query catalog for any data in a wide range
-                        # If we find data, check if it's recent enough (file hasn't changed)
-                        try:
-                            # Query with a very wide range to see if ANY data exists
-                            existing_check = self.catalog.query(
-                                data_cls=TradeTick,
-                                instrument_ids=[instrument],
-                                limit=1
+                        # Convert instrument ID to GCS format
+                        config_instrument_id = instrument_config.get("id", str(instrument_id))
+                        venue_name = venue_config.get("name", "BINANCE")
+                        gcs_instrument_id = convert_instrument_id_to_gcs_format(config_instrument_id, venue_name)
+                        
+                        print(f"☁️  Loading trades from GCS for {date_str}...")
+                        print(f"   Config instrument: {config_instrument_id}")
+                        print(f"   GCS instrument: {gcs_instrument_id}")
+                        
+                        # Use async loader
+                        import asyncio
+                        df = asyncio.run(
+                            self.ucs_loader.load_trades(
+                                date_str=date_str,
+                                instrument_id=gcs_instrument_id,
+                                start_ts=start,
+                                end_ts=end,
+                                use_streaming=True
                             )
-                            if existing_check:
-                                # Data exists - check if we need to re-convert
-                                # For now, always convert to ensure freshness
-                                # TODO: Add file mtime comparison for smarter caching
-                                print(f"Data exists in catalog, checking if conversion needed for {raw_trades_path.name}...")
-                        except Exception:
-                            pass  # No data exists, proceed with conversion
+                        )
                         
-                        print(f"Status: Converting and registering trades from {raw_trades_path.name}...")
-                        print(f"Status:   File size: {raw_trades_path.stat().st_size / (1024*1024):.2f} MB")
+                        print(f"   Loaded {len(df)} rows from GCS")
+                        
+                        # Filter by time window if needed (GCS data might be full day)
+                        if 'ts_event' in df.columns:
+                            start_ns = int(start.timestamp() * 1_000_000_000)
+                            end_ns = int(end.timestamp() * 1_000_000_000)
+                            df = df[(df['ts_event'] >= start_ns) & (df['ts_event'] <= end_ns)]
+                            print(f"   Filtered to {len(df)} rows in time window")
+                        
                         trades_count = DataConverter.convert_trades_parquet_to_catalog(
-                            raw_trades_path,
+                            df,  # DataFrame instead of file path
                             instrument,
                             self.catalog,
                             price_precision=price_precision,
                             size_precision=size_precision,
-                            skip_if_exists=True  # Skip if already converted (performance optimization)
+                            skip_if_exists=True
                         )
-                        total_trades_count += trades_count
-                        print(f"Status: ✓ Registered {trades_count} trades from {raw_trades_path.name} to catalog")
+                        total_trades_count = trades_count
+                        print(f"✅ Registered {trades_count} trades from GCS to catalog")
                     except Exception as e:
                         import traceback
-                        print(f"Error converting/registering trades from {raw_trades_path}: {e}")
+                        print(f"❌ Error loading trades from GCS: {e}")
                         traceback.print_exc()
+                        if data_source == "gcs":
+                            raise
+                        # For 'auto', fall back to local
+                        print(f"   Falling back to local files...")
+                        data_source = "local"
+                
+                # Load from local files (original logic or fallback)
+                if data_source == "local" and raw_trades_paths:
+                    for raw_trades_path in raw_trades_paths:
+                        if raw_trades_path.exists():
+                            try:
+                                print(f"📂 Converting and registering trades from {raw_trades_path.name}...")
+                                print(f"   File size: {raw_trades_path.stat().st_size / (1024*1024):.2f} MB")
+                                trades_count = DataConverter.convert_trades_parquet_to_catalog(
+                                    raw_trades_path,
+                                    instrument,
+                                    self.catalog,
+                                    price_precision=price_precision,
+                                    size_precision=size_precision,
+                                    skip_if_exists=True
+                                )
+                                total_trades_count += trades_count
+                                print(f"✅ Registered {trades_count} trades from {raw_trades_path.name} to catalog")
+                            except Exception as e:
+                                import traceback
+                                print(f"❌ Error converting/registering trades from {raw_trades_path}: {e}")
+                                traceback.print_exc()
             
             if total_trades_count > 0:
                 print(f"Total registered: {total_trades_count} trades from {len(raw_trades_paths)} file(s)")
@@ -388,7 +492,64 @@ class BacktestEngine:
         # Process order book data - only add if file exists and conversion succeeds
         # Skip order book conversion if we're in trades-only mode or if conversion fails
         if snapshot_mode in ("book", "both"):
-            if raw_book_paths and any(p.exists() for p in raw_book_paths):
+            # Handle GCS book snapshot loading
+            if data_source == "gcs" and self.ucs_loader:
+                try:
+                    # Extract date from start timestamp
+                    date_str = start.strftime("%Y-%m-%d")
+                    
+                    # Convert instrument ID to GCS format
+                    config_instrument_id = instrument_config.get("id", str(instrument_id))
+                    venue_name = venue_config.get("name", "BINANCE")
+                    gcs_instrument_id = convert_instrument_id_to_gcs_format(config_instrument_id, venue_name)
+                    
+                    print(f"☁️  Loading book snapshots from GCS for {date_str}...")
+                    print(f"   GCS instrument: {gcs_instrument_id}")
+                    
+                    # Use async loader
+                    import asyncio
+                    book_df = asyncio.run(
+                        self.ucs_loader.load_book_snapshots(
+                            date_str=date_str,
+                            instrument_id=gcs_instrument_id,
+                            start_ts=start,
+                            end_ts=end,
+                            use_streaming=True
+                        )
+                    )
+                    
+                    print(f"   Loaded {len(book_df)} book snapshot rows from GCS")
+                    
+                    # Filter by time window if needed
+                    if 'ts_event' in book_df.columns:
+                        start_ns = int(start.timestamp() * 1_000_000_000)
+                        end_ns = int(end.timestamp() * 1_000_000_000)
+                        book_df = book_df[(book_df['ts_event'] >= start_ns) & (book_df['ts_event'] <= end_ns)]
+                        print(f"   Filtered to {len(book_df)} rows in time window")
+                    
+                    # Convert book snapshots to catalog
+                    book_count = DataConverter.convert_orderbook_parquet_to_catalog(
+                        book_df,  # DataFrame instead of file path
+                        instrument,
+                        self.catalog,
+                        is_snapshot=True,
+                        price_precision=price_precision,
+                        size_precision=size_precision,
+                        skip_if_exists=True
+                    )
+                    print(f"✅ Registered {book_count} book snapshots from GCS to catalog")
+                    has_book_data = book_count > 0
+                except Exception as e:
+                    import traceback
+                    print(f"❌ Error loading book snapshots from GCS: {e}")
+                    traceback.print_exc()
+                    if snapshot_mode == "book":
+                        raise
+                    # For 'both' mode, continue without book data
+                    has_book_data = False
+            
+            # Handle local book snapshot files
+            elif raw_book_paths and any(p.exists() for p in raw_book_paths):
                 # Check if data already exists in catalog
                 try:
                     existing = self.catalog.query(
@@ -808,26 +969,28 @@ class BacktestEngine:
     def run(
         self,
         instrument: str,
-        dataset: str,
         start: datetime,
         end: datetime,
+        dataset: Optional[str] = None,
         snapshot_mode: str = "both",
         fast_mode: bool = False,
         export_ticks: bool = False,
-        close_positions: bool = True
+        close_positions: bool = True,
+        data_source: str = "auto"
     ) -> Dict[str, Any]:
         """
         Run backtest.
         
         Args:
             instrument: Instrument identifier (for display/logging)
-            dataset: Dataset name
+            dataset: Dataset name (optional - auto-detected from time window if not provided)
             start: Start timestamp
             end: End timestamp
             snapshot_mode: Snapshot mode (trades|book|both)
             fast_mode: If True, return minimal summary only
             export_ticks: If True, export tick data (only in report mode)
             close_positions: If True, close all open positions at end of backtest (default: True)
+            data_source: Data source ('local', 'gcs', or 'auto') - defaults to config or 'auto'
         
         Returns:
             Result dictionary
@@ -836,18 +999,100 @@ class BacktestEngine:
         if config is None:
             raise RuntimeError("Config not loaded")
         
+        # Set data_source in config (CLI arg takes precedence over config)
+        if data_source and data_source != "auto":
+            config["data_source"] = data_source
+        elif "data_source" not in config:
+            config["data_source"] = "auto"
+        
         # Get instrument ID from config (not CLI arg)
         instrument_id_str = config["instrument"]["id"]
         instrument_id = InstrumentId.from_str(instrument_id_str)
         
-        # VALIDATION: Check data availability before proceeding
-        print("Status: Validating data availability...")
-        validation_errors = []
-        validation_warnings = []
+        # Auto-detect dataset from time window if not provided
+        start_date = start.date() if hasattr(start, 'date') else start.date()
+        if not dataset:
+            dataset = f"day-{start_date.strftime('%Y-%m-%d')}"
+            print(f"Status: Auto-detected dataset '{dataset}' from time window")
         
-        # First, validate that dataset name matches the date in time window
-        # Extract date from dataset name (format: day-YYYY-MM-DD)
-        dataset_date = None
+        # Determine actual data source early
+        actual_data_source = config.get("data_source", "gcs").lower()
+        if actual_data_source not in ("local", "gcs"):
+            # Default to GCS if invalid
+            actual_data_source = "gcs"
+            config["data_source"] = "gcs"
+        
+        # Initialize UCS loader if needed for GCS
+        if actual_data_source == "gcs" and UCS_AVAILABLE:
+            if self.ucs_loader is None:
+                try:
+                    self.ucs_loader = UCSDataLoader()
+                    print(f"✅ UCS Data Loader initialized for GCS data source")
+                except Exception as e:
+                    print(f"⚠️  Failed to initialize UCS loader: {e}")
+                    raise RuntimeError(f"Cannot use GCS data source: {e}")
+        
+        # Check catalog FIRST - if data exists, skip validation
+        catalog_path_str = os.getenv("DATA_CATALOG_PATH") or config["environment"].get("DATA_CATALOG_PATH", "/app/backend/data/parquet")
+        catalog_path = Path(catalog_path_str).resolve()
+        catalog_path.mkdir(parents=True, exist_ok=True)
+        
+        if self.catalog is None:
+            self.catalog = ParquetDataCatalog(str(catalog_path))
+        
+        print(f"Status: Checking catalog at {catalog_path} for existing data...")
+        catalog_has_trades = False
+        catalog_has_book = False
+        
+        try:
+            existing_trades = self.catalog.query(
+                data_cls=TradeTick,
+                instrument_ids=[instrument_id],
+                start=start,
+                end=end,
+                limit=1
+            )
+            if existing_trades:
+                catalog_has_trades = True
+                all_trades = self.catalog.query(
+                    data_cls=TradeTick,
+                    instrument_ids=[instrument_id],
+                    start=start,
+                    end=end
+                )
+                print(f"Status: ✓ Found {len(all_trades)} existing trade(s) in catalog for time window")
+        except Exception:
+            pass
+        
+        if snapshot_mode in ("book", "both"):
+            try:
+                existing_book = self.catalog.query(
+                    data_cls=OrderBookDeltas,
+                    instrument_ids=[instrument_id],
+                    start=start,
+                    end=end,
+                    limit=1
+                )
+                if existing_book:
+                    catalog_has_book = True
+                    print(f"Status: ✓ Found existing book snapshot data in catalog for time window")
+            except Exception:
+                pass
+        
+        # If catalog has all required data, skip validation
+        if catalog_has_trades and (snapshot_mode == "trades" or (snapshot_mode in ("book", "both") and catalog_has_book)):
+            print(f"Status: ✓ All required data exists in catalog - skipping validation")
+            # Skip all validation - data is ready
+            validation_errors = []
+            validation_warnings = []
+        else:
+            # VALIDATION: Only validate if data not in catalog
+            print("Status: Validating data availability (data not in catalog)...")
+            validation_errors = []
+            validation_warnings = []
+            
+            # Validate that dataset name matches the date in time window
+            dataset_date = None
         if dataset.startswith("day-"):
             try:
                 date_str = dataset.replace("day-", "")
@@ -859,8 +1104,6 @@ class BacktestEngine:
         else:
             print(f"Status: Dataset '{dataset}' does not start with 'day-', skipping date validation")
         
-        # Extract date from start time window
-        start_date = start.date() if hasattr(start, 'date') else start.date()
         print(f"Status: Time window start date: {start_date}")
         
         # Check if dataset date matches time window date
@@ -871,133 +1114,206 @@ class BacktestEngine:
                 f"  Dataset name: {dataset} (date: {dataset_date})\n"
                 f"  Requested time window start: {start} (date: {start_date})\n"
                 f"  The dataset name must match the date in the time window.\n"
-                f"  Please use dataset 'day-{start_date.strftime('%Y-%m-%d')}' for data on {start_date}.\n"
-                f"  Or change the time window to match dataset date {dataset_date}."
+                f"  Auto-detected dataset: 'day-{start_date.strftime('%Y-%m-%d')}'"
             )
             validation_errors.append(error_msg)
             print(f"Status: ✗ VALIDATION ERROR: {error_msg}")
-        
-        # Fail fast if date mismatch - don't proceed with file discovery
-        if validation_errors:
-            error_msg = "VALIDATION FAILED:\n" + "\n".join(validation_errors)
-            raise RuntimeError(error_msg)
-        
-        # Check raw data files exist
-        base_path_str = os.getenv("UNIFIED_CLOUD_LOCAL_PATH") or config["environment"].get("UNIFIED_CLOUD_LOCAL_PATH", "/app/data_downloads")
-        base_path = Path(base_path_str).resolve()
-        data_catalog_config = config.get("data_catalog", {})
-        trades_path_pattern = data_catalog_config.get("trades_path")
-        book_path_pattern = data_catalog_config.get("book_snapshot_5_path")
-        
-        # Discover actual files (handle wildcards)
-        raw_trades_paths = []
-        raw_book_paths = []
-        
-        if trades_path_pattern:
-            if "*" in trades_path_pattern:
-                # Auto-discover across date folders
-                from backend.utils.paths import discover_data_files
-                raw_trades_paths = discover_data_files(base_path, trades_path_pattern, instrument_id_str)
-                print(f"Status: Discovered {len(raw_trades_paths)} trade file(s) matching pattern")
+            
+            # Fail fast if date mismatch
+            if validation_errors:
+                error_msg = "VALIDATION FAILED:\n" + "\n".join(validation_errors)
+                raise RuntimeError(error_msg)
+            
+            # Only validate source files if data not in catalog
+            if actual_data_source == "gcs":
+                # GCS validation - already done in form, but double-check if needed
+                print(f"Status: GCS data source - validation already done in form")
             else:
-                path_str = str(trades_path_pattern)
-                if path_str.startswith("data_downloads/"):
-                    path_str = path_str[len("data_downloads/"):]
-                resolved = (base_path / path_str).resolve()
-                if resolved.exists():
-                    raw_trades_paths = [resolved]
-        
-        if book_path_pattern:
-            if "*" in book_path_pattern:
-                from backend.utils.paths import discover_data_files
-                raw_book_paths = discover_data_files(base_path, book_path_pattern, instrument_id_str)
-                print(f"Status: Discovered {len(raw_book_paths)} book snapshot file(s) matching pattern")
-            else:
-                path_str = str(book_path_pattern)
-                if path_str.startswith("data_downloads/"):
-                    path_str = path_str[len("data_downloads/"):]
-                resolved = (base_path / path_str).resolve()
-                if resolved.exists():
-                    raw_book_paths = [resolved]
-        
-        # Validate trades data availability
-        if snapshot_mode in ("trades", "both"):
-            # First check if dataset folder exists
-            dataset_folder = base_path / "raw_tick_data" / "by_date" / dataset
-            if not dataset_folder.exists():
-                validation_errors.append(
-                    f"ERROR: Dataset folder not found: {dataset_folder}\n"
-                    f"  Required for dataset: {dataset}\n"
-                    f"  Expected location: {dataset_folder}\n"
-                    f"  Please ensure the dataset folder exists before running the backtest."
-                )
-            elif not raw_trades_paths:
-                # Dataset exists but no trade files found
-                validation_errors.append(
-                    f"ERROR: No trade data files found for dataset '{dataset}'\n"
-                    f"  Dataset folder exists: {dataset_folder}\n"
-                    f"  Pattern searched: {trades_path_pattern}\n"
-                    f"  Please ensure trade data files exist in the dataset folder."
-                )
-            else:
-                # Check if files exist and have data (lenient validation - actual time window checked during catalog query)
-                print(f"Status: Checking trade data file availability...")
-                total_trades_found = 0
-                for path in raw_trades_paths:
-                    if path.exists():
-                        try:
-                            # Quick check: verify file has data (exact time range validation happens during catalog query)
-                            import pyarrow.parquet as pq
-                            table = pq.read_table(path, columns=[pq.read_schema(path).names[0]])  # Read just first column to check if file has data
-                            if table.num_rows > 0:
-                                print(f"Status: ✓ Trade data file {path.name} exists and has {table.num_rows} rows")
-                                total_trades_found += 1
-                            else:
-                                validation_warnings.append(f"WARNING: Trade file {path.name} is empty")
-                        except Exception as e:
-                            validation_warnings.append(f"WARNING: Could not verify trade file {path.name}: {e}")
+                # Local file validation - only if data not in catalog
+                base_path_str = os.getenv("UNIFIED_CLOUD_LOCAL_PATH") or config["environment"].get("UNIFIED_CLOUD_LOCAL_PATH", "/app/data_downloads")
+                base_path = Path(base_path_str).resolve()
+                data_catalog_config = config.get("data_catalog", {})
+                trades_path_pattern = data_catalog_config.get("trades_path")
+                book_path_pattern = data_catalog_config.get("book_snapshot_5_path")
                 
-                if total_trades_found == 0:
-                    validation_errors.append(
-                        f"ERROR: No trade data files found or files are empty for dataset '{dataset}'\n"
-                        f"  Dataset folder: {dataset_folder}\n"
-                        f"  Files checked: {[str(p) for p in raw_trades_paths]}\n"
-                        f"  Please ensure trade data files exist and contain data."
-                    )
+                # Discover actual files (handle wildcards)
+                raw_trades_paths = []
+                raw_book_paths = []
+                
+                if trades_path_pattern:
+                    if "*" in trades_path_pattern:
+                        from backend.utils.paths import discover_data_files
+                        raw_trades_paths = discover_data_files(base_path, trades_path_pattern, instrument_id_str)
+                        print(f"Status: Discovered {len(raw_trades_paths)} trade file(s) matching pattern")
+                    else:
+                        path_str = str(trades_path_pattern)
+                        if path_str.startswith("data_downloads/"):
+                            path_str = path_str[len("data_downloads/"):]
+                        resolved = (base_path / path_str).resolve()
+                        if resolved.exists():
+                            raw_trades_paths = [resolved]
+                
+                if book_path_pattern:
+                    if "*" in book_path_pattern:
+                        from backend.utils.paths import discover_data_files
+                        raw_book_paths = discover_data_files(base_path, book_path_pattern, instrument_id_str)
+                        print(f"Status: Discovered {len(raw_book_paths)} book snapshot file(s) matching pattern")
+                    else:
+                        path_str = str(book_path_pattern)
+                        if path_str.startswith("data_downloads/"):
+                            path_str = path_str[len("data_downloads/"):]
+                        resolved = (base_path / path_str).resolve()
+                        if resolved.exists():
+                            raw_book_paths = [resolved]
+            
+            # Validate trades data availability (only if not in catalog)
+            if not catalog_has_trades and snapshot_mode in ("trades", "both"):
+                # Skip local file validation if using GCS
+                if actual_data_source == "gcs":
+                    # Validate GCS data availability instead
+                    try:
+                        from backend.api.data_checker import DataAvailabilityChecker, _convert_instrument_id_to_gcs_format
+                        import asyncio
+                        checker = DataAvailabilityChecker(data_source="gcs")
+                        config_instrument_id = config["instrument"]["id"]
+                        venue_name = config["venue"]["name"]
+                        gcs_instrument_id = _convert_instrument_id_to_gcs_format(config_instrument_id)
+                        
+                        date_str = start_date.strftime("%Y-%m-%d")
+                        has_trades = asyncio.run(checker.check_gcs_file_exists(date_str, gcs_instrument_id, "trades"))
+                        
+                        if not has_trades:
+                            validation_errors.append(
+                                f"ERROR: Trades data NOT FOUND in GCS for {date_str}\n"
+                                f"  Instrument: {gcs_instrument_id}\n"
+                                f"  Expected: raw_tick_data/by_date/day-{date_str}/data_type-trades/{gcs_instrument_id}.parquet\n"
+                                f"  Please ensure the data exists in the GCS bucket."
+                            )
+                        else:
+                            print(f"Status: ✓ Trades data found in GCS for {date_str}")
+                    except Exception as e:
+                        validation_errors.append(
+                            f"ERROR: Failed to validate GCS trades data: {e}\n"
+                            f"  Please check GCS connectivity and permissions."
+                        )
                 else:
-                    print(f"Status: ✓ Found {total_trades_found} trade file(s) with data (time window will be validated during catalog query)")
-        
-        # Validate book data availability
-        if snapshot_mode in ("book", "both"):
-            # Check if dataset folder exists first
-            dataset_folder = base_path / "raw_tick_data" / "by_date" / dataset
-            if not dataset_folder.exists():
-                if snapshot_mode == "book":
-                    validation_errors.append(
-                        f"ERROR: Dataset folder not found: {dataset_folder}\n"
-                        f"  Required for dataset: {dataset}\n"
-                        f"  Book snapshot mode requires the dataset folder to exist.\n"
-                        f"  Expected location: {dataset_folder}"
-                    )
+                    # Local file validation
+                    dataset_folder = base_path / "raw_tick_data" / "by_date" / dataset
+                    if not dataset_folder.exists():
+                        validation_errors.append(
+                            f"ERROR: Dataset folder not found: {dataset_folder}\n"
+                            f"  Required for dataset: {dataset}\n"
+                            f"  Expected location: {dataset_folder}\n"
+                            f"  Please ensure the dataset folder exists before running the backtest."
+                        )
+                    elif not raw_trades_paths:
+                        # Dataset exists but no trade files found
+                        validation_errors.append(
+                            f"ERROR: No trade data files found for dataset '{dataset}'\n"
+                            f"  Dataset folder exists: {dataset_folder}\n"
+                            f"  Pattern searched: {trades_path_pattern}\n"
+                            f"  Please ensure trade data files exist in the dataset folder."
+                        )
+                    else:
+                        # Check if files exist and have data (lenient validation - actual time window checked during catalog query)
+                        print(f"Status: Checking trade data file availability...")
+                        total_trades_found = 0
+                        for path in raw_trades_paths:
+                            if path.exists():
+                                try:
+                                    # Quick check: verify file has data (exact time range validation happens during catalog query)
+                                    import pyarrow.parquet as pq
+                                    table = pq.read_table(path, columns=[pq.read_schema(path).names[0]])  # Read just first column to check if file has data
+                                    if table.num_rows > 0:
+                                        print(f"Status: ✓ Trade data file {path.name} exists and has {table.num_rows} rows")
+                                        total_trades_found += 1
+                                    else:
+                                        validation_warnings.append(f"WARNING: Trade file {path.name} is empty")
+                                except Exception as e:
+                                    validation_warnings.append(f"WARNING: Could not verify trade file {path.name}: {e}")
+                        
+                        if total_trades_found == 0:
+                            validation_errors.append(
+                                f"ERROR: No trade data files found or files are empty for dataset '{dataset}'\n"
+                                f"  Dataset folder: {dataset_folder}\n"
+                                f"  Files checked: {[str(p) for p in raw_trades_paths]}\n"
+                                f"  Please ensure trade data files exist and contain data."
+                            )
+                        else:
+                            print(f"Status: ✓ Found {total_trades_found} trade file(s) with data (time window will be validated during catalog query)")
+            
+            # Validate book data availability (only if not in catalog)
+            if not catalog_has_book and snapshot_mode in ("book", "both"):
+                # Skip local file validation if using GCS
+                if actual_data_source == "gcs":
+                    # Validate GCS data availability instead
+                    try:
+                        from backend.api.data_checker import DataAvailabilityChecker, _convert_instrument_id_to_gcs_format
+                        import asyncio
+                        checker = DataAvailabilityChecker(data_source="gcs")
+                        config_instrument_id = config["instrument"]["id"]
+                        gcs_instrument_id = _convert_instrument_id_to_gcs_format(config_instrument_id)
+                        
+                        date_str = start_date.strftime("%Y-%m-%d")
+                        has_book = asyncio.run(checker.check_gcs_file_exists(date_str, gcs_instrument_id, "book_snapshot_5"))
+                        
+                        if not has_book:
+                            if snapshot_mode == "book":
+                                validation_errors.append(
+                                    f"ERROR: Book snapshot data NOT FOUND in GCS for {date_str}\n"
+                                    f"  Instrument: {gcs_instrument_id}\n"
+                                    f"  Expected: raw_tick_data/by_date/day-{date_str}/data_type-book_snapshot_5/{gcs_instrument_id}.parquet\n"
+                                    f"  Please ensure the data exists in the GCS bucket."
+                                )
+                            else:
+                                validation_warnings.append(
+                                    f"WARNING: Book snapshot data not found in GCS for {date_str}, will use trades-only mode"
+                                )
+                        else:
+                            print(f"Status: ✓ Book snapshot data found in GCS for {date_str}")
+                    except Exception as e:
+                        if snapshot_mode == "book":
+                            validation_errors.append(
+                                f"ERROR: Failed to validate GCS book snapshot data: {e}\n"
+                                f"  Please check GCS connectivity and permissions."
+                            )
+                        else:
+                            validation_warnings.append(f"WARNING: Could not validate GCS book snapshot data: {e}")
                 else:
-                    # "both" mode - already reported in trades validation above
-                    pass
-            elif not raw_book_paths:
-                if snapshot_mode == "book":
-                    validation_errors.append(
-                        f"ERROR: Book snapshot mode requested but no book data files found\n"
-                        f"  Dataset folder exists: {dataset_folder}\n"
-                        f"  Pattern searched: {book_path_pattern}\n"
-                        f"  Please ensure book snapshot data files exist in the dataset folder."
-                    )
-                else:
-                    validation_warnings.append(
-                        f"WARNING: Book snapshot data not found for dataset '{dataset}', will use trades-only mode\n"
-                        f"  Dataset folder: {dataset_folder}\n"
-                        f"  Pattern searched: {book_path_pattern}"
-                    )
-            else:
-                print(f"Status: ✓ Found {len(raw_book_paths)} book snapshot file(s)")
+                    # Local file validation
+                    dataset_folder = base_path / "raw_tick_data" / "by_date" / dataset
+                    if not dataset_folder.exists():
+                        if snapshot_mode == "book":
+                            validation_errors.append(
+                                f"ERROR: Dataset folder not found: {dataset_folder}\n"
+                                f"  Required for dataset: {dataset}\n"
+                                f"  Book snapshot mode requires the dataset folder to exist.\n"
+                                f"  Expected location: {dataset_folder}"
+                            )
+                        else:
+                            # "both" mode - already reported in trades validation above
+                            pass
+                    elif not raw_book_paths:
+                        if snapshot_mode == "book":
+                            validation_errors.append(
+                                f"ERROR: Book snapshot mode requested but no book data files found\n"
+                                f"  Dataset folder exists: {dataset_folder}\n"
+                                f"  Pattern searched: {book_path_pattern}\n"
+                                f"  Please ensure book snapshot data files exist in the dataset folder."
+                            )
+                        else:
+                            validation_warnings.append(
+                                f"WARNING: Book snapshot data not found for dataset '{dataset}', will use trades-only mode\n"
+                                f"  Dataset folder: {dataset_folder}\n"
+                                f"  Pattern searched: {book_path_pattern}"
+                            )
+                    else:
+                        print(f"Status: ✓ Found {len(raw_book_paths)} book snapshot file(s)")
+            
+            # Fail if validation errors exist (only if data not in catalog)
+            if 'validation_errors' in locals() and validation_errors:
+                error_msg = "VALIDATION FAILED:\n" + "\n".join(validation_errors)
+                raise RuntimeError(error_msg)
         
         # Check catalog for existing data
         catalog_path_str = os.getenv("DATA_CATALOG_PATH") or config["environment"].get("DATA_CATALOG_PATH", "/app/backend/data/parquet")

@@ -37,7 +37,7 @@ docker-compose logs -f backend
 docker-compose ps
 
 # Run infrastructure tests
-./backend/scripts/test_docker_infrastructure.sh
+./backend/scripts/tests/test_docker_infrastructure.sh
 ```
 
 ### Access UI
@@ -122,10 +122,12 @@ docker-compose exec backend python backend/run_backtest.py \
 
 **Available CLI Flags:**
 - `--fast`: Fast mode (minimal JSON summary)
-- `--report`: Report mode (full details: timeline, orders, metadata)
+- `--report`: Report mode (full details: timeline, orders, metadata). Default if neither `--fast` nor `--report` specified.
 - `--export_ticks`: Export tick data (requires `--report`)
 - `--snapshot_mode`: `trades`, `book`, or `both` (default: `both`)
+- `--data_source`: `local`, `gcs`, or `auto` (default: `auto`)
 - `--no_close_positions`: Don't close positions at end (default: positions are closed)
+- `--dataset`: Optional dataset name (auto-detected from time window if not provided)
 
 #### Via API
 
@@ -161,10 +163,12 @@ curl -X POST http://localhost:8000/api/backtest/run \
 ```
 
 **API Parameters:**
-- `fast`: boolean - Fast mode (minimal summary)
-- `report`: boolean - Report mode (full details)
+- `fast`: boolean - Fast mode (minimal summary). Mutually exclusive with `report`.
+- `report`: boolean - Report mode (full details). Default if neither `fast` nor `report` specified.
 - `export_ticks`: boolean - Export tick data (requires `report: true`)
 - `snapshot_mode`: string - `"trades"`, `"book"`, or `"both"` (default: `"both"`)
+- `data_source`: string - `"local"`, `"gcs"`, or `"auto"` (default: `"auto"`)
+- `dataset`: string (optional) - Dataset name (auto-detected from time window if not provided)
 
 ## Project Structure
 
@@ -186,6 +190,11 @@ curl -X POST http://localhost:8000/api/backtest/run \
 │   ├── results.py              # Result serialization
 │   ├── api/                    # REST API server
 │   │   └── server.py           # FastAPI endpoints
+│   ├── scripts/                # Backend scripts
+│   │   ├── start.sh            # Container startup script
+│   │   ├── mount_gcs.sh        # GCS FUSE mounting script
+│   │   ├── tests/              # Test scripts
+│   │   └── tools/              # Utility scripts
 │   ├── data/parquet/           # Converted catalog data (auto-generated)
 │   └── backtest_results/       # Backtest outputs
 │       ├── fast/               # Fast mode JSON summaries
@@ -214,10 +223,7 @@ curl -X POST http://localhost:8000/api/backtest/run \
 │               ├── data_type-trades/
 │               └── data_type-book_snapshot_5/
 │
-└── docs/                       # Additional documentation
-    ├── TESTING_GUIDE.md
-    ├── QUICK_TEST.md
-    └── ...
+└── FUSE_SETUP.md               # GCS FUSE integration guide
 ```
 
 ## Configuration
@@ -338,9 +344,6 @@ Watch logs: `docker-compose logs -f backend`
 - **BACKTEST_SPEC.md**: Complete CLI reference, JSON schema, strategy logic
 - **FRONTEND_UI_SPEC.md**: Frontend component architecture, UI patterns
 - **FUSE_SETUP.md**: GCS FUSE integration guide
-- **SYSTEM_REVIEW_AND_AGENTS.md**: System review and 5 agent definitions
-- **AGENTS_QUICK_REFERENCE.md**: Quick reference for testing agents
-- **docs/REFERENCE.md**: Technical reference (data conversion, PnL calculation, testing, troubleshooting)
 
 ## Development
 

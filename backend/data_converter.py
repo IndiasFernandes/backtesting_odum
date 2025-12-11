@@ -2,7 +2,7 @@
 import pandas as pd
 import pyarrow.parquet as pq
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Union
 from datetime import datetime
 
 from nautilus_trader.model.data import TradeTick, OrderBookDeltas, OrderBookDelta
@@ -17,7 +17,7 @@ class DataConverter:
     
     @staticmethod
     def convert_trades_parquet_to_catalog(
-        parquet_path: Path,
+        parquet_path: Union[Path, pd.DataFrame],
         instrument_id: InstrumentId,
         catalog: ParquetDataCatalog,
         price_precision: int = 2,
@@ -25,7 +25,7 @@ class DataConverter:
         skip_if_exists: bool = True
     ) -> int:
         """
-        Convert raw TradeTick Parquet file to catalog format.
+        Convert raw TradeTick Parquet file or DataFrame to catalog format.
         
         Supports multiple Parquet schemas:
         
@@ -37,7 +37,7 @@ class DataConverter:
            - exchange, symbol (for instrument_id construction)
         
         Args:
-            parquet_path: Path to raw Parquet file
+            parquet_path: Path to raw Parquet file OR DataFrame
             instrument_id: Instrument ID for the trades
             catalog: ParquetDataCatalog instance to write to
             price_precision: Price decimal precision
@@ -47,16 +47,20 @@ class DataConverter:
         Returns:
             Number of TradeTick objects written (0 if skipped)
         """
-        if not parquet_path.exists():
-            raise FileNotFoundError(f"Parquet file not found: {parquet_path}")
+        # Handle DataFrame or file path
+        if isinstance(parquet_path, pd.DataFrame):
+            df = parquet_path.copy()
+            source_info = f"DataFrame ({len(df)} rows)"
+        else:
+            if not parquet_path.exists():
+                raise FileNotFoundError(f"Parquet file not found: {parquet_path}")
+            source_info = str(parquet_path)
         
         # OPTIMIZATION: Check if data already exists in catalog for this file
         # Skip conversion if data already exists (major performance improvement)
         if skip_if_exists:
             try:
                 # Check if we have data for this instrument
-                # We'll check file size/modification time vs catalog to determine if re-conversion is needed
-                # For now, if data exists, we skip conversion (assumes data is already converted)
                 existing = catalog.query(
                     data_cls=TradeTick,
                     instrument_ids=[instrument_id],
@@ -64,19 +68,24 @@ class DataConverter:
                 )
                 if existing:
                     # Data exists - skip conversion for performance
-                    # Note: This assumes data is already converted. If you need to update data,
-                    # set skip_if_exists=False or clear the catalog first
-                    file_size_mb = parquet_path.stat().st_size / (1024 * 1024)
-                    print(f"Data already exists in catalog for {instrument_id} (file: {file_size_mb:.2f} MB) - skipping conversion for performance")
+                    if isinstance(parquet_path, pd.DataFrame):
+                        print(f"Data already exists in catalog for {instrument_id} (DataFrame: {len(parquet_path)} rows) - skipping conversion for performance")
+                    else:
+                        file_size_mb = parquet_path.stat().st_size / (1024 * 1024)
+                        print(f"Data already exists in catalog for {instrument_id} (file: {file_size_mb:.2f} MB) - skipping conversion for performance")
                     return 0  # Return 0 to indicate no new data was written
             except Exception:
                 # If check fails, proceed with conversion
                 pass
         
-        # Read Parquet file using PyArrow directly (faster than pandas)
-        print(f"Reading Parquet file: {parquet_path}")
-        table = pq.read_table(parquet_path)
-        df = table.to_pandas()
+        # Read Parquet file if path provided, otherwise use DataFrame
+        if not isinstance(parquet_path, pd.DataFrame):
+            # Read Parquet file using PyArrow directly (faster than pandas)
+            print(f"Reading Parquet file: {parquet_path}")
+            table = pq.read_table(parquet_path)
+            df = table.to_pandas()
+        else:
+            print(f"Using provided DataFrame: {len(df)} rows")
         
         # Detect schema format and map columns
         if 'ts_event' in df.columns:
@@ -211,7 +220,7 @@ class DataConverter:
     
     @staticmethod
     def convert_orderbook_parquet_to_catalog(
-        parquet_path: Path,
+        parquet_path: Union[Path, pd.DataFrame],
         instrument_id: InstrumentId,
         catalog: ParquetDataCatalog,
         is_snapshot: bool = True,
@@ -220,7 +229,7 @@ class DataConverter:
         skip_if_exists: bool = True
     ) -> int:
         """
-        Convert raw OrderBook snapshot Parquet file to catalog format.
+        Convert raw OrderBook snapshot Parquet file or DataFrame to catalog format.
         
         Expected Parquet schema (book_snapshot_5 format):
         - timestamp (int64): Event timestamp in microseconds
@@ -229,7 +238,7 @@ class DataConverter:
         - bids[0-4].price, bids[0-4].amount: 5 levels of bid prices/sizes
         
         Args:
-            parquet_path: Path to raw Parquet file
+            parquet_path: Path to raw Parquet file OR DataFrame
             instrument_id: Instrument ID for the order book
             catalog: ParquetDataCatalog instance to write to
             is_snapshot: Whether this is a snapshot (True) or deltas (False)
@@ -239,8 +248,14 @@ class DataConverter:
         Returns:
             Number of OrderBookDeltas objects written
         """
-        if not parquet_path.exists():
-            raise FileNotFoundError(f"Parquet file not found: {parquet_path}")
+        # Handle DataFrame or file path
+        if isinstance(parquet_path, pd.DataFrame):
+            df = parquet_path.copy()
+            source_info = f"DataFrame ({len(df)} rows)"
+        else:
+            if not parquet_path.exists():
+                raise FileNotFoundError(f"Parquet file not found: {parquet_path}")
+            source_info = str(parquet_path)
         
         # OPTIMIZATION: Check if data already exists in catalog for this file
         # Skip conversion if data already exists (major performance improvement)
@@ -254,16 +269,23 @@ class DataConverter:
                 )
                 if existing:
                     # Data exists - skip conversion for performance
-                    file_size_mb = parquet_path.stat().st_size / (1024 * 1024)
-                    print(f"Orderbook data already exists in catalog for {instrument_id} (file: {file_size_mb:.2f} MB) - skipping conversion for performance")
+                    if isinstance(parquet_path, pd.DataFrame):
+                        print(f"Orderbook data already exists in catalog for {instrument_id} (DataFrame: {len(parquet_path)} rows) - skipping conversion for performance")
+                    else:
+                        file_size_mb = parquet_path.stat().st_size / (1024 * 1024)
+                        print(f"Orderbook data already exists in catalog for {instrument_id} (file: {file_size_mb:.2f} MB) - skipping conversion for performance")
                     return 0  # Return 0 to indicate no new data was written
             except Exception:
                 # If check fails, proceed with conversion
                 pass
         
-        print(f"Reading order book Parquet file: {parquet_path}")
-        df = pd.read_parquet(parquet_path)
-        print(f"Loaded {len(df)} rows")
+        # Read Parquet file if path provided, otherwise use DataFrame
+        if not isinstance(parquet_path, pd.DataFrame):
+            print(f"Reading order book Parquet file: {parquet_path}")
+            df = pd.read_parquet(parquet_path)
+            print(f"Loaded {len(df)} rows")
+        else:
+            print(f"Using provided DataFrame: {len(df)} rows")
         
         # Detect timestamp columns
         timestamp_col = None
@@ -284,20 +306,46 @@ class DataConverter:
         if local_timestamp_col is None:
             local_timestamp_col = timestamp_col
         
-        # Detect bid/ask columns (supports asks[0].price, bids[0].price format)
+        # Detect bid/ask columns - support multiple formats:
+        # Format 1: asks[0].price, bids[0].price (Tardis format)
+        # Format 2: ask_price_0, bid_price_0 (GCS/NautilusTrader format)
         ask_price_cols = [col for col in df.columns if col.startswith('asks[') and col.endswith('].price')]
         ask_amount_cols = [col for col in df.columns if col.startswith('asks[') and col.endswith('].amount')]
         bid_price_cols = [col for col in df.columns if col.startswith('bids[') and col.endswith('].price')]
         bid_amount_cols = [col for col in df.columns if col.startswith('bids[') and col.endswith('].amount')]
         
-        # Sort columns by index to maintain order
-        ask_price_cols.sort(key=lambda x: int(x.split('[')[1].split(']')[0]))
-        ask_amount_cols.sort(key=lambda x: int(x.split('[')[1].split(']')[0]))
-        bid_price_cols.sort(key=lambda x: int(x.split('[')[1].split(']')[0]))
-        bid_amount_cols.sort(key=lambda x: int(x.split('[')[1].split(']')[0]))
+        # If Format 1 not found, try Format 2 (GCS format: ask_price_0, bid_price_0, ask_size_0, bid_size_0)
+        if not ask_price_cols or not bid_price_cols:
+            ask_price_cols = [col for col in df.columns if col.startswith('ask_price_')]
+            ask_amount_cols = [col for col in df.columns if col.startswith('ask_size_')]
+            bid_price_cols = [col for col in df.columns if col.startswith('bid_price_')]
+            bid_amount_cols = [col for col in df.columns if col.startswith('bid_size_')]
+            
+            # Sort by level number (extract number from column name)
+            if ask_price_cols:
+                ask_price_cols.sort(key=lambda x: int(x.split('_')[-1]) if x.split('_')[-1].isdigit() else 999)
+            if ask_amount_cols:
+                ask_amount_cols.sort(key=lambda x: int(x.split('_')[-1]) if x.split('_')[-1].isdigit() else 999)
+            if bid_price_cols:
+                bid_price_cols.sort(key=lambda x: int(x.split('_')[-1]) if x.split('_')[-1].isdigit() else 999)
+            if bid_amount_cols:
+                bid_amount_cols.sort(key=lambda x: int(x.split('_')[-1]) if x.split('_')[-1].isdigit() else 999)
+        else:
+            # Sort Format 1 columns by index to maintain order
+            ask_price_cols.sort(key=lambda x: int(x.split('[')[1].split(']')[0]))
+            ask_amount_cols.sort(key=lambda x: int(x.split('[')[1].split(']')[0]))
+            bid_price_cols.sort(key=lambda x: int(x.split('[')[1].split(']')[0]))
+            bid_amount_cols.sort(key=lambda x: int(x.split('[')[1].split(']')[0]))
         
         if not ask_price_cols or not bid_price_cols:
-            raise ValueError("Could not find ask/bid price columns (expected format: asks[0].price, bids[0].price)")
+            available_cols = ', '.join(df.columns.tolist()[:20])  # Show first 20 columns
+            raise ValueError(
+                f"Could not find ask/bid price columns.\n"
+                f"Expected formats:\n"
+                f"  - asks[0].price, bids[0].price (Tardis format)\n"
+                f"  - ask_price_0, bid_price_0 (GCS/NautilusTrader format)\n"
+                f"Available columns: {available_cols}{'...' if len(df.columns) > 20 else ''}"
+            )
         
         print(f"Found {len(ask_price_cols)} ask levels and {len(bid_price_cols)} bid levels")
         
@@ -315,9 +363,25 @@ class DataConverter:
             
             for idx, row in batch_df.iterrows():
                 try:
-                    # Convert timestamps from microseconds to nanoseconds
-                    ts_event_ns = int(row[timestamp_col] * 1000)
-                    ts_init_ns = int(row[local_timestamp_col] * 1000)
+                    # Convert timestamps to nanoseconds
+                    # Handle both microseconds and nanoseconds
+                    ts_event_raw = row[timestamp_col]
+                    ts_init_raw = row[local_timestamp_col]
+                    
+                    # Check if timestamps are already in nanoseconds (ts_event format) or microseconds
+                    if timestamp_col == 'ts_event':
+                        # Already in nanoseconds
+                        ts_event_ns = int(ts_event_raw)
+                    else:
+                        # Assume microseconds, convert to nanoseconds
+                        ts_event_ns = int(ts_event_raw * 1000)
+                    
+                    if local_timestamp_col == 'ts_init':
+                        # Already in nanoseconds
+                        ts_init_ns = int(ts_init_raw)
+                    else:
+                        # Assume microseconds, convert to nanoseconds
+                        ts_init_ns = int(ts_init_raw * 1000)
                     
                     # Build deltas list for this snapshot
                     deltas = []

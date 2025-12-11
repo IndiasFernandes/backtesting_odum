@@ -1,62 +1,159 @@
 import { useState, useEffect, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { backtestApi, BacktestRunRequest } from '../services/api'
+import { backtestApi, BacktestRunRequest, DataCheckResult, InstrumentInfo } from '../services/api'
 import { useToastContext } from '../components/Layout'
 
 export default function BacktestRunnerPage() {
   const toast = useToastContext()
   
+  // Venue/Instrument selection state
+  const [venueCategory, setVenueCategory] = useState<string>('cefi')
+  const [selectedVenue, setSelectedVenue] = useState<string>('BINANCE')
+  const [selectedProductType, setSelectedProductType] = useState<string>('PERPETUAL')
+  const [selectedInstrument, setSelectedInstrument] = useState<string>('BTC-USDT')
+  
   // Pre-fill with example values for Binance Futures May 23, 02:00-02:05 UTC (5 minutes)
   const [formData, setFormData] = useState<BacktestRunRequest>({
-    instrument: 'BTCUSDT',
-    dataset: 'day-2023-05-23',
-    config: 'binance_futures_btcusdt_l2_trades_config.json',
-    start: '2023-05-23T02:00',
-    end: '2023-05-23T02:05',
+    instrument: 'BTC-USDT',
+    config: '', // Will be auto-generated
+    start: '2023-05-25T02:00',
+    end: '2023-05-25T02:05',
     fast: false,
     report: true,
     export_ticks: false,
     snapshot_mode: 'both',
+    data_source: 'gcs',
   })
 
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({})
+  const [dataValidation, setDataValidation] = useState<DataCheckResult | null>(null)
+  const [isCheckingData, setIsCheckingData] = useState(false)
 
-  const { data: datasets } = useQuery({
-    queryKey: ['datasets'],
-    queryFn: () => backtestApi.getDatasets(),
+  // Fetch venues
+  const { data: venuesData } = useQuery({
+    queryKey: ['venues'],
+    queryFn: () => backtestApi.getVenues(),
   })
 
-  const { data: configs } = useQuery({
-    queryKey: ['configs'],
-    queryFn: () => backtestApi.getConfigs(),
+  // Fetch instrument types for selected venue
+  const { data: instrumentTypesData } = useQuery({
+    queryKey: ['instrumentTypes', selectedVenue],
+    queryFn: () => backtestApi.getInstrumentTypes(selectedVenue),
+    enabled: !!selectedVenue,
   })
 
-  // Set default values once datasets and configs are loaded
-  useEffect(() => {
-    if (datasets && datasets.length > 0) {
-      // Set to example dataset if available and not already set, otherwise first available
-      const currentDataset = formData.dataset
-      if (!currentDataset || !datasets.includes(currentDataset)) {
-        const defaultDataset = datasets.includes('day-2023-05-23') 
-          ? 'day-2023-05-23' 
-          : datasets[0]
-        setFormData(prev => ({ ...prev, dataset: defaultDataset }))
-      }
-    }
-  }, [datasets, formData.dataset])
+  // Fetch instruments for selected venue and product type
+  const { data: instrumentsData } = useQuery({
+    queryKey: ['instruments', selectedVenue, selectedProductType],
+    queryFn: () => backtestApi.getInstruments(selectedVenue, selectedProductType),
+    enabled: !!selectedVenue && !!selectedProductType,
+  })
 
+  // Update formData when instrument selection changes
   useEffect(() => {
-    if (configs && configs.length > 0) {
-      // Set to example config if available and not already set, otherwise first available
-      const currentConfig = formData.config
-      if (!currentConfig || !configs.includes(currentConfig)) {
-        const defaultConfig = configs.includes('binance_futures_btcusdt_l2_trades_config.json')
-          ? 'binance_futures_btcusdt_l2_trades_config.json'
-          : configs[0]
-        setFormData(prev => ({ ...prev, config: defaultConfig }))
+    if (instrumentsData && selectedInstrument) {
+      const instrumentInfo = instrumentsData.instruments.find(
+        (inst: InstrumentInfo) => inst.symbol === selectedInstrument
+      )
+      if (instrumentInfo) {
+        setFormData(prev => ({
+          ...prev,
+          instrument: instrumentInfo.config_id,
+        }))
       }
     }
-  }, [configs, formData.config])
+  }, [selectedInstrument, instrumentsData])
+
+  // Reset product type when venue changes
+  useEffect(() => {
+    if (instrumentTypesData && instrumentTypesData.types.length > 0) {
+      // Set to first available type, or PERPETUAL if available
+      const preferredType = instrumentTypesData.types.includes('PERPETUAL') 
+        ? 'PERPETUAL' 
+        : instrumentTypesData.types[0]
+      setSelectedProductType(preferredType)
+    }
+  }, [selectedVenue, instrumentTypesData])
+
+  // Reset instrument when product type changes
+  useEffect(() => {
+    if (instrumentsData && instrumentsData.instruments.length > 0) {
+      // Prefer BTC-USDT if available, otherwise first instrument
+      const preferred = instrumentsData.instruments.find((inst: InstrumentInfo) => inst.symbol === 'BTC-USDT')
+        || instrumentsData.instruments[0]
+      setSelectedInstrument(preferred.symbol)
+    }
+  }, [selectedProductType, instrumentsData])
+
+  // Real-time data validation when form changes
+  useEffect(() => {
+    // Wait for instrument to be set (either from formData or from selection)
+    const currentInstrumentId = formData.instrument || (instrumentsData && selectedInstrument 
+      ? instrumentsData.instruments.find((inst: InstrumentInfo) => inst.symbol === selectedInstrument)?.config_id 
+      : '')
+    
+    if (!formData.start || !formData.end || !currentInstrumentId || !formData.data_source) {
+      setDataValidation(null)
+      return
+    }
+
+    // Debounce validation
+    const timeoutId = setTimeout(async () => {
+      setIsCheckingData(true)
+      try {
+        // Format dates for API (add seconds and Z if needed)
+        const formatToISO = (datetimeLocal: string): string => {
+          if (!datetimeLocal) return ''
+          let clean = datetimeLocal.replace('Z', '')
+          if (!clean.includes(':', 13)) {
+            clean = clean + ':00'
+          }
+          return clean + 'Z'
+        }
+
+        const result = await backtestApi.checkDataAvailability({
+          instrument_id: currentInstrumentId,
+          start: formatToISO(formData.start),
+          end: formatToISO(formData.end),
+          snapshot_mode: formData.snapshot_mode || 'both',
+          data_source: formData.data_source || 'gcs',
+        })
+        
+        setDataValidation(result)
+      } catch (error: any) {
+        console.error('Error checking data availability:', error)
+        setDataValidation({
+          valid: false,
+          has_trades: false,
+          has_book: false,
+          date: '',
+          dataset: '',
+          source: formData.data_source || 'auto',
+          messages: [],
+          errors: [`Error checking data: ${error.message || 'Unknown error'}`],
+          warnings: [],
+        })
+      } finally {
+        setIsCheckingData(false)
+      }
+    }, 500) // Debounce 500ms
+
+    return () => clearTimeout(timeoutId)
+  }, [formData.start, formData.end, formData.instrument, selectedInstrument, instrumentsData, formData.snapshot_mode, formData.data_source])
+
+  // Re-validate form when dataValidation changes or form data changes
+  useEffect(() => {
+    if (dataValidation !== null || formData.start || formData.end) {
+      // Use setTimeout to avoid calling validateForm during render
+      const timeoutId = setTimeout(() => {
+        validateForm()
+      }, 100)
+      return () => clearTimeout(timeoutId)
+    }
+  }, [dataValidation, formData.start, formData.end, formData.snapshot_mode, formData.instrument, formData.config])
+
+  // Config is now auto-generated from venue/instrument selection
+  // No need to auto-select from configs list
 
   const validateForm = (): boolean => {
     const errors: Record<string, string> = {}
@@ -66,19 +163,28 @@ export default function BacktestRunnerPage() {
       errors.instrument = 'Instrument is required'
     }
 
-    // Dataset validation
-    if (!formData.dataset || formData.dataset.trim() === '') {
-      errors.dataset = 'Dataset is required'
-    } else if (datasets && !datasets.includes(formData.dataset)) {
-      errors.dataset = `Dataset "${formData.dataset}" not found. Available: ${datasets.slice(0, 5).join(', ')}${datasets.length > 5 ? '...' : ''}`
+    // Data availability validation - only check if dataValidation has been set
+    // Don't show errors while checking (isCheckingData) or if validation hasn't run yet
+    if (dataValidation && !isCheckingData) {
+      if (!dataValidation.valid) {
+        if (!dataValidation.has_trades && formData.snapshot_mode !== 'book') {
+          errors.data = 'Trades data is required for backtest but not found'
+        }
+        if (formData.snapshot_mode === 'book' && !dataValidation.has_book) {
+          errors.data = 'Book snapshot data is required for snapshot_mode="book" but not found'
+        }
+        if (formData.snapshot_mode === 'both' && (!dataValidation.has_trades || !dataValidation.has_book)) {
+          if (!dataValidation.has_trades) {
+            errors.data = 'Trades data is required but not found'
+          } else if (!dataValidation.has_book) {
+            errors.data = 'Book snapshot data is required but not found'
+          }
+        }
+      }
     }
 
-    // Config validation
-    if (!formData.config || formData.config.trim() === '') {
-      errors.config = 'Config is required'
-    } else if (configs && !configs.includes(formData.config)) {
-      errors.config = `Config "${formData.config}" not found. Available: ${configs.slice(0, 5).join(', ')}${configs.length > 5 ? '...' : ''}`
-    }
+    // Config validation - now optional, will be auto-generated
+    // Config is no longer required as we generate it from venue/instrument selection
 
     // Time validation
     if (!formData.start || !formData.end) {
@@ -153,6 +259,10 @@ export default function BacktestRunnerPage() {
     if (formData.report) flags.push('--report')
     if (formData.export_ticks) flags.push('--export_ticks')
     if (formData.snapshot_mode) flags.push(`--snapshot_mode ${formData.snapshot_mode}`)
+    if (formData.data_source && formData.data_source !== 'auto') {
+      flags.push(`--data_source ${formData.data_source}`)
+    }
+    // Note: dataset is auto-detected from time window, not included in CLI
     
     return `python backend/run_backtest.py ${flags.join(' \\\n  ')}`
   }
@@ -267,83 +377,99 @@ export default function BacktestRunnerPage() {
       
       <form onSubmit={handleSubmit} className="space-y-6">
         <div className="bg-dark-surface border border-dark-border rounded-lg p-6 space-y-4">
+          {/* Venue Category Selection */}
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              Category
+            </label>
+            <select
+              value={venueCategory}
+              onChange={(e) => {
+                setVenueCategory(e.target.value)
+                // Reset venue selection
+                const venues = e.target.value === 'cefi' 
+                  ? venuesData?.cefi || []
+                  : venuesData?.tradfi || []
+                if (venues.length > 0) {
+                  setSelectedVenue(venues[0].code)
+                }
+              }}
+              className="w-full bg-dark-bg border border-dark-border rounded px-3 py-2 text-white"
+            >
+              <option value="cefi">CeFi (Crypto)</option>
+              <option value="tradfi">TradFi (Traditional Finance)</option>
+            </select>
+          </div>
+
+          {/* Venue Selection */}
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              Venue
+            </label>
+            <select
+              value={selectedVenue}
+              onChange={(e) => setSelectedVenue(e.target.value)}
+              className="w-full bg-dark-bg border border-dark-border rounded px-3 py-2 text-white"
+              disabled={!venuesData}
+            >
+              <option value="">Select venue...</option>
+              {(venueCategory === 'cefi' ? venuesData?.cefi : venuesData?.tradfi)?.map((venue: any) => (
+                <option key={venue.code} value={venue.code}>{venue.name}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Product Type Selection */}
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              Product Type
+            </label>
+            <select
+              value={selectedProductType}
+              onChange={(e) => setSelectedProductType(e.target.value)}
+              className="w-full bg-dark-bg border border-dark-border rounded px-3 py-2 text-white"
+              disabled={!instrumentTypesData || !selectedVenue}
+            >
+              <option value="">Select type...</option>
+              {instrumentTypesData?.types.map((type: string) => (
+                <option key={type} value={type}>{type}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Instrument Selection */}
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-2">
               Instrument
             </label>
-            <input
-              type="text"
-              value={formData.instrument}
-              onChange={(e) => {
-                setFormData({ ...formData, instrument: e.target.value })
-                if (validationErrors.instrument) {
-                  setValidationErrors({ ...validationErrors, instrument: '' })
-                }
-              }}
+            <select
+              value={selectedInstrument}
+              onChange={(e) => setSelectedInstrument(e.target.value)}
               className={`w-full bg-dark-bg border rounded px-3 py-2 text-white ${
                 validationErrors.instrument ? 'border-red-500' : 'border-dark-border'
               }`}
-              placeholder="BTCUSDT"
+              disabled={!instrumentsData || !selectedProductType}
               required
-            />
+            >
+              <option value="">Select instrument...</option>
+              {instrumentsData?.instruments.map((inst: InstrumentInfo) => (
+                <option key={inst.symbol} value={inst.symbol}>
+                  {inst.symbol} ({inst.config_id})
+                </option>
+              ))}
+            </select>
             {validationErrors.instrument && (
               <p className="mt-1 text-sm text-red-400">{validationErrors.instrument}</p>
             )}
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">
-              Dataset
-            </label>
-            <select
-              value={formData.dataset || ''}
-              onChange={(e) => {
-                setFormData({ ...formData, dataset: e.target.value })
-                if (validationErrors.dataset) {
-                  setValidationErrors({ ...validationErrors, dataset: '' })
-                }
-              }}
-              className={`w-full bg-dark-bg border rounded px-3 py-2 text-white ${
-                validationErrors.dataset ? 'border-red-500' : 'border-dark-border'
-              }`}
-              required
-              disabled={!datasets || datasets.length === 0}
-            >
-              <option value="">{datasets && datasets.length > 0 ? 'Select dataset' : 'Loading datasets...'}</option>
-              {datasets?.map((ds) => (
-                <option key={ds} value={ds}>{ds}</option>
-              ))}
-            </select>
-            {validationErrors.dataset && (
-              <p className="mt-1 text-sm text-red-400">{validationErrors.dataset}</p>
-            )}
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">
-              Config
-            </label>
-            <select
-              value={formData.config || ''}
-              onChange={(e) => {
-                setFormData({ ...formData, config: e.target.value })
-                if (validationErrors.config) {
-                  setValidationErrors({ ...validationErrors, config: '' })
-                }
-              }}
-              className={`w-full bg-dark-bg border rounded px-3 py-2 text-white ${
-                validationErrors.config ? 'border-red-500' : 'border-dark-border'
-              }`}
-              required
-              disabled={!configs || configs.length === 0}
-            >
-              <option value="">{configs && configs.length > 0 ? 'Select config' : 'Loading configs...'}</option>
-              {configs?.map((cfg) => (
-                <option key={cfg} value={cfg}>{cfg}</option>
-              ))}
-            </select>
-            {validationErrors.config && (
-              <p className="mt-1 text-sm text-red-400">{validationErrors.config}</p>
+            {instrumentsData && selectedInstrument && (
+              <div className="mt-2 text-xs text-gray-400 space-y-1">
+                <div>GCS ID: <span className="font-mono text-gray-300">
+                  {instrumentsData.instruments.find((i: InstrumentInfo) => i.symbol === selectedInstrument)?.gcs_id}
+                </span></div>
+                <div>Nautilus ID: <span className="font-mono text-gray-300">
+                  {instrumentsData.instruments.find((i: InstrumentInfo) => i.symbol === selectedInstrument)?.nautilus_id}
+                </span></div>
+              </div>
             )}
           </div>
 
@@ -358,13 +484,8 @@ export default function BacktestRunnerPage() {
                 onChange={(e) => {
                   const value = e.target.value
                   setFormData({ ...formData, start: value })
-                  if (validationErrors.start) {
-                    setValidationErrors({ ...validationErrors, start: '' })
-                  }
-                  // Re-validate end time if it exists
-                  if (formData.end && validationErrors.end) {
-                    validateForm()
-                  }
+                  // Don't manually clear errors - let validation system handle it
+                  // The useEffect will trigger validation check automatically
                 }}
                 className={`w-full bg-dark-bg border rounded px-3 py-2 text-white ${
                   validationErrors.start ? 'border-red-500' : 'border-dark-border'
@@ -386,11 +507,8 @@ export default function BacktestRunnerPage() {
                 onChange={(e) => {
                   const value = e.target.value
                   setFormData({ ...formData, end: value })
-                  if (validationErrors.end) {
-                    setValidationErrors({ ...validationErrors, end: '' })
-                  }
-                  // Re-validate when end time changes
-                  setTimeout(() => validateForm(), 100)
+                  // Don't manually clear errors - let validation system handle it
+                  // The useEffect will trigger validation check automatically
                 }}
                 className={`w-full bg-dark-bg border rounded px-3 py-2 text-white ${
                   validationErrors.end ? 'border-red-500' : 'border-dark-border'
@@ -409,13 +527,69 @@ export default function BacktestRunnerPage() {
             </label>
             <select
               value={formData.snapshot_mode}
-              onChange={(e) => setFormData({ ...formData, snapshot_mode: e.target.value as 'trades' | 'book' | 'both' })}
-              className="w-full bg-dark-bg border border-dark-border rounded px-3 py-2 text-white"
+              onChange={(e) => {
+                setFormData({ ...formData, snapshot_mode: e.target.value as 'trades' | 'book' | 'both' })
+                // Don't manually clear errors - let validation system handle it
+                // The useEffect will trigger validation check automatically
+              }}
+              className={`w-full bg-dark-bg border rounded px-3 py-2 text-white ${
+                validationErrors.data ? 'border-red-500' : 'border-dark-border'
+              }`}
             >
               <option value="trades">Trades</option>
               <option value="book">Book</option>
               <option value="both">Both</option>
             </select>
+            {dataValidation && (
+              <div className="mt-2 space-y-1">
+                {isCheckingData && (
+                  <p className="text-xs text-gray-400">Checking data availability...</p>
+                )}
+                {!isCheckingData && dataValidation.valid && (
+                  <div className="text-xs">
+                    <p className="text-green-400">✅ Data available for {dataValidation.dataset}</p>
+                    <p className="text-gray-400 mt-1">
+                      Trades: {dataValidation.has_trades ? '✅' : '❌'} | 
+                      Book: {dataValidation.has_book ? '✅' : '❌'} | 
+                      Source: {dataValidation.source}
+                    </p>
+                  </div>
+                )}
+                {!isCheckingData && !dataValidation.valid && (
+                  <div className="text-xs">
+                    {dataValidation.errors.map((err, idx) => (
+                      <p key={idx} className="text-red-400 mb-1">{err}</p>
+                    ))}
+                    {dataValidation.warnings.map((warn, idx) => (
+                      <p key={idx} className="text-yellow-400 mb-1">{warn}</p>
+                    ))}
+                    {dataValidation.messages.map((msg, idx) => (
+                      <p key={idx} className="text-gray-400 mb-1">{msg}</p>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+            {validationErrors.data && (
+              <p className="mt-1 text-sm text-red-400">{validationErrors.data}</p>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              Data Source
+            </label>
+            <select
+              value={formData.data_source || 'gcs'}
+              onChange={(e) => setFormData({ ...formData, data_source: e.target.value as 'local' | 'gcs' })}
+              className="w-full bg-dark-bg border border-dark-border rounded px-3 py-2 text-white"
+            >
+              <option value="gcs">GCS Bucket</option>
+              <option value="local">Local Files</option>
+            </select>
+            <p className="mt-1 text-xs text-gray-400">
+              Choose data source: GCS uses cloud bucket, Local uses local files
+            </p>
           </div>
 
           <div className="space-y-2">
@@ -512,10 +686,10 @@ export default function BacktestRunnerPage() {
 
         <button
           type="submit"
-          disabled={isRunning}
+          disabled={isRunning || !dataValidation?.valid || Object.keys(validationErrors).length > 0}
           className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-medium py-2 px-4 rounded-lg"
         >
-          {isRunning ? 'Running Backtest...' : 'Run Backtest'}
+          {isRunning ? 'Running Backtest...' : (!dataValidation?.valid ? 'Fix Validation Errors' : 'Run Backtest')}
         </button>
 
         {error && (

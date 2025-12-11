@@ -19,6 +19,7 @@ try:
     from backend.utils.validation import validate_iso8601
     from backend.api.mount_status import check_mount_status
     from backend.utils.log_capture import get_log_capture
+    from backend.api.data_checker import DataAvailabilityChecker
 except ImportError as e:
     import sys
     print(f"Error importing backend modules: {e}", file=sys.stderr)
@@ -110,7 +111,7 @@ async def get_mount_status() -> Dict[str, Any]:
 
 class BacktestRunRequest(BaseModel):
     instrument: str
-    dataset: str
+    dataset: Optional[str] = None  # Optional - auto-detected from time window if not provided
     config: str
     start: str
     end: str
@@ -118,6 +119,15 @@ class BacktestRunRequest(BaseModel):
     report: bool = False
     export_ticks: bool = False
     snapshot_mode: str = "both"
+    data_source: str = "auto"  # 'local', 'gcs', or 'auto'
+
+
+class DataCheckRequest(BaseModel):
+    instrument_id: str
+    start: str
+    end: str
+    snapshot_mode: str = "both"
+    data_source: str = "auto"
 
 
 def _run_backtest_sync(
@@ -163,6 +173,13 @@ def _run_backtest_sync(
             start = validate_iso8601(request.start)
             end = validate_iso8601(request.end)
             
+            # Auto-detect dataset from time window if not provided
+            dataset = request.dataset
+            if not dataset:
+                start_date = start.date() if hasattr(start, 'date') else start.date()
+                dataset = f"day-{start_date.strftime('%Y-%m-%d')}"
+                print(f"Status: Auto-detected dataset '{dataset}' from time window")
+            
             send_step("Initializing backtest engine...")
             
             # Initialize engine
@@ -174,13 +191,14 @@ def _run_backtest_sync(
             # Run backtest
             result = engine.run(
                 instrument=request.instrument,
-                dataset=request.dataset,
+                dataset=dataset,
                 start=start,
                 end=end,
                 snapshot_mode=request.snapshot_mode,
                 fast_mode=request.fast,
                 export_ticks=request.export_ticks,
-                close_positions=True  # Default to closing positions
+                close_positions=True,  # Default to closing positions
+                data_source=request.data_source
             )
             
             send_step("Saving results...")
@@ -252,6 +270,13 @@ async def run_backtest(request: BacktestRunRequest) -> Dict[str, Any]:
             start = validate_iso8601(request.start)
             end = validate_iso8601(request.end)
             
+            # Auto-detect dataset from time window if not provided
+            dataset = request.dataset
+            if not dataset:
+                start_date = start.date() if hasattr(start, 'date') else start.date()
+                dataset = f"day-{start_date.strftime('%Y-%m-%d')}"
+                print(f"Status: Auto-detected dataset '{dataset}' from time window")
+            
             # Initialize engine
             catalog_manager = CatalogManager()
             engine = BacktestEngine(config_loader, catalog_manager)
@@ -259,13 +284,14 @@ async def run_backtest(request: BacktestRunRequest) -> Dict[str, Any]:
             # Run backtest
             result = engine.run(
                 instrument=request.instrument,
-                dataset=request.dataset,
+                dataset=dataset,
                 start=start,
                 end=end,
                 snapshot_mode=request.snapshot_mode,
                 fast_mode=request.fast,
                 export_ticks=request.export_ticks,
-                close_positions=True  # Default to closing positions
+                close_positions=True,  # Default to closing positions
+                data_source=request.data_source
             )
             
             # Save results to disk (same as CLI)
@@ -1023,7 +1049,7 @@ async def get_tick_data(run_id: str):
 
 @app.get("/api/datasets")
 async def get_datasets() -> List[str]:
-    """Scan data_downloads folder for available datasets."""
+    """Scan data_downloads folder for available datasets (deprecated - use check-data instead)."""
     datasets = []
     data_dir = Path(os.getenv("UNIFIED_CLOUD_LOCAL_PATH", "/app/data_downloads"))
     
@@ -1037,6 +1063,95 @@ async def get_datasets() -> List[str]:
     return sorted(datasets)
 
 
+@app.post("/api/backtest/check-data")
+async def check_data_availability(request: DataCheckRequest) -> Dict[str, Any]:
+    """
+    Check data availability for a time window and instrument.
+    
+    Auto-detects dataset from time window and validates:
+    - Trades data (required for backtest)
+    - Book snapshot data (optional, depends on snapshot_mode)
+    
+    Returns validation result with clear messages about what's missing.
+    """
+    try:
+        # Parse timestamps
+        start = validate_iso8601(request.start)
+        end = validate_iso8601(request.end)
+        
+        # Get instrument ID from request
+        instrument_id = request.instrument_id
+        
+        # If instrument_id looks like a simple symbol (e.g., "BTCUSDT"), 
+        # try to get the full instrument ID from config
+        # For now, use instrument_id directly - frontend should send full ID from config
+        
+        # Check data availability
+        try:
+            checker = DataAvailabilityChecker(data_source=request.data_source)
+            result = await checker.check_data_availability(
+                instrument_id=instrument_id,
+                start=start,
+                end=end,
+                snapshot_mode=request.snapshot_mode
+            )
+            
+            return result
+        except ValueError as ve:
+            # Configuration errors (e.g., missing bucket, credentials)
+            # Return as validation result with error instead of 500
+            import traceback
+            error_detail = str(ve)
+            print(f"Configuration error in check_data_availability: {error_detail}")
+            print(traceback.format_exc())
+            
+            # Return error result instead of raising HTTPException
+            date_obj = start.date() if hasattr(start, 'date') else start.date()
+            date_str = date_obj.strftime("%Y-%m-%d")
+            return {
+                "valid": False,
+                "has_trades": False,
+                "has_book": False,
+                "date": date_str,
+                "dataset": f"day-{date_str}",
+                "source": request.data_source,
+                "messages": [],
+                "errors": [f"❌ GCS Configuration Error: {error_detail}"],
+                "warnings": []
+            }
+        except Exception as checker_error:
+            # Other errors - log and return error result
+            import traceback
+            error_detail = f"Error checking data availability: {str(checker_error)}"
+            print(f"Error in check_data_availability: {error_detail}")
+            print(traceback.format_exc())
+            
+            # Return error result instead of raising HTTPException
+            date_obj = start.date() if hasattr(start, 'date') else start.date()
+            date_str = date_obj.strftime("%Y-%m-%d")
+            return {
+                "valid": False,
+                "has_trades": False,
+                "has_book": False,
+                "date": date_str,
+                "dataset": f"day-{date_str}",
+                "source": request.data_source,
+                "messages": [],
+                "errors": [f"❌ Error: {error_detail}"],
+                "warnings": []
+            }
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
+    except Exception as e:
+        import traceback
+        error_detail = f"Error checking data availability: {str(e)}"
+        print(f"Error in check_data_availability endpoint: {error_detail}")
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=error_detail)
+
+
 @app.get("/api/configs")
 async def get_configs() -> List[str]:
     """List available config files."""
@@ -1048,6 +1163,88 @@ async def get_configs() -> List[str]:
             configs.append(config_file.name)
     
     return sorted(configs)
+
+
+@app.get("/api/instruments/venues")
+async def get_venues() -> Dict[str, Any]:
+    """Get list of available venues grouped by category."""
+    from backend.instrument_registry import get_venues_by_category
+    
+    return {
+        "cefi": get_venues_by_category("cefi"),
+        "tradfi": get_venues_by_category("tradfi"),
+    }
+
+
+@app.get("/api/instruments/types/{venue_code}")
+async def get_instrument_types(venue_code: str) -> Dict[str, Any]:
+    """Get available instrument types for a venue."""
+    from backend.instrument_registry import get_instrument_types_for_venue
+    
+    types = get_instrument_types_for_venue(venue_code.upper())
+    return {
+        "venue_code": venue_code.upper(),
+        "types": types,
+    }
+
+
+@app.get("/api/instruments/list/{venue_code}/{product_type}")
+async def get_instruments(venue_code: str, product_type: str) -> Dict[str, Any]:
+    """
+    Get available instruments for a venue and product type.
+    
+    Tries to list from GCS first, falls back to common instruments.
+    """
+    from backend.instrument_registry import (
+        get_common_instruments,
+        convert_to_gcs_format,
+        convert_to_nautilus_format,
+        get_config_instrument_id
+    )
+    from backend.ucs_data_loader import UCSDataLoader
+    
+    venue_code_upper = venue_code.upper()
+    product_type_upper = product_type.upper()
+    
+    # Try to get from GCS
+    instruments = []
+    try:
+        ucs_loader = UCSDataLoader()
+        # List available dates and instruments from GCS
+        # This is a simplified version - in production you'd query GCS metadata
+        # For now, return common instruments
+        common = get_common_instruments(venue_code_upper, product_type_upper)
+        for symbol in common:
+            gcs_id = convert_to_gcs_format(venue_code_upper, product_type_upper, symbol)
+            nautilus_id = convert_to_nautilus_format(venue_code_upper, product_type_upper, symbol)
+            config_id = get_config_instrument_id(venue_code_upper, product_type_upper, symbol)
+            
+            instruments.append({
+                "symbol": symbol,
+                "gcs_id": gcs_id,
+                "nautilus_id": nautilus_id,
+                "config_id": config_id,
+            })
+    except Exception as e:
+        # Fallback to common instruments
+        common = get_common_instruments(venue_code_upper, product_type_upper)
+        for symbol in common:
+            gcs_id = convert_to_gcs_format(venue_code_upper, product_type_upper, symbol)
+            nautilus_id = convert_to_nautilus_format(venue_code_upper, product_type_upper, symbol)
+            config_id = get_config_instrument_id(venue_code_upper, product_type_upper, symbol)
+            
+            instruments.append({
+                "symbol": symbol,
+                "gcs_id": gcs_id,
+                "nautilus_id": nautilus_id,
+                "config_id": config_id,
+            })
+    
+    return {
+        "venue_code": venue_code_upper,
+        "product_type": product_type_upper,
+        "instruments": instruments,
+    }
 
 
 @app.get("/api/configs/{config_name}")
