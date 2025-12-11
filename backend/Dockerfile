@@ -22,18 +22,8 @@ COPY backend/ /app/backend/
 # Copy external directory (for configs only)
 COPY external/ /app/external/
 
-# Install unified-cloud-services from GitHub
-# Supports GitHub token for private repos via build arg
-ARG GITHUB_TOKEN
-ARG GITHUB_USER=IggyIkenna
-
-RUN if [ -n "$GITHUB_TOKEN" ]; then \
-        echo "🔐 Installing unified-cloud-services with GitHub token"; \
-        pip install --no-cache-dir "git+https://${GITHUB_TOKEN}@github.com/${GITHUB_USER}/unified-cloud-services.git"; \
-    else \
-        echo "📦 Installing unified-cloud-services from GitHub"; \
-        pip install --no-cache-dir "git+https://github.com/${GITHUB_USER}/unified-cloud-services.git"; \
-    fi
+# Install unified-cloud-services from GitHub (before pip install -e .)
+RUN pip install --no-cache-dir "git+https://github.com/IggyIkenna/unified-cloud-services.git"
 
 # Install execution-services package in editable mode (replaces PYTHONPATH)
 RUN pip install --no-cache-dir -e .

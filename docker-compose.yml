@@ -5,11 +5,6 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
-      args:
-        # GitHub token for private repo access (optional)
-        # Set via: GITHUB_TOKEN=your_token docker-compose build
-        GITHUB_TOKEN: ${GITHUB_TOKEN:-}
-        GITHUB_USER: ${GITHUB_USER:-IggyIkenna}
     container_name: odum-backend
     ports:
       - "8000:8000"
