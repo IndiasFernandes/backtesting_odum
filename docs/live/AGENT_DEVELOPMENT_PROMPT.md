@@ -120,7 +120,7 @@ Update SSOT documents when:
 Use Context7 for:
 - NautilusTrader documentation (TradingNode, BacktestNode, etc.)
 - External API documentation (Deribit, Interactive Brokers, etc.)
-- Library documentation (protobuf, gRPC, PostgreSQL, etc.)
+- Library documentation (FastAPI, REST APIs, PostgreSQL, etc.)
 - Best practices and patterns
 - Technical implementation questions
 

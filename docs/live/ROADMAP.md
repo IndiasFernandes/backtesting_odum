@@ -682,19 +682,27 @@ docker-compose --profile <profile> logs -f live-backend
 
 ### 1. API Protocol ✅
 
-**Decision**: **gRPC** (fastest option)
+**Decision**: **REST API** (JSON) - Simple, practical, sufficient for most use cases
 
 **Rationale**:
-- Lowest latency for order submission
-- Binary protocol (faster than JSON)
-- Streaming support for real-time updates
-- Aligns with workflow requirement for fast execution
-- Protobuf messages match spec requirements
+- Simple to implement and debug
+- Easy to test (curl, Postman, browser dev tools)
+- Works with any language/framework
+- Sufficient latency for most volumes (<100 orders/sec)
+- Human-readable JSON format
+- Universal support
 
 **Implementation**:
-- Strategy service → Live Execution: gRPC with protobuf Order messages
+- Strategy service → Live Execution: REST API (FastAPI) with JSON Order messages
 - Frontend → Live API: REST API (for UI compatibility)
-- Internal components: gRPC for high-performance paths
+- Internal components: Direct function calls (no API needed)
+
+**Future Improvement**: Consider migrating to **gRPC** if:
+- Order volume exceeds 100 orders/sec
+- Latency requirements become critical (<5ms)
+- Need bidirectional streaming support
+
+gRPC provides lower latency (~2-5ms vs ~10-20ms) and smaller payloads, but requires more setup (.proto files, code generation) and is harder to debug.
 
 ### 2. Database ✅
 
@@ -899,36 +907,73 @@ backend/
 - Live pages only visible when `liveAvailable === true`
 - Status page always accessible
 
-### Frontend Live Execution UI Features
+### Frontend Live Execution UI Pages
 
-**Trade Submission Page** (`/live/execute`):
-- Form fields: Instrument, Side (BUY/SELL), Quantity, Order Type (MARKET/LIMIT), Price (if LIMIT)
-- Execution Algorithm selection (TWAP, VWAP, Iceberg, NORMAL)
-- Algorithm parameters configuration
-- Submit button sends order to live API
-- **CLI Output Display**: Shows exactly what's being sent (matches CLI output)
-- Real-time order status updates (matches CLI output format)
+**1. Trade Execution Page** (`/live/execute`):
+- **Purpose**: Submit trades via form, generates CLI command according to specs
+- **Form Fields**:
+  - Venue selector (Binance, Bybit, OKX, Deribit, etc.)
+  - Instrument selector (canonical ID format)
+  - Trade type (BUY/SELL)
+  - Order type (MARKET/LIMIT)
+  - Quantity
+  - Price (if LIMIT order)
+  - Execution Algorithm (TWAP, VWAP, Iceberg, NORMAL)
+  - Algorithm parameters (duration, slices, etc.)
+- **CLI Command Display**: Shows the exact CLI command being generated (matches specs)
+- **Submit**: Sends order to live API (`POST /api/orders`)
+- **Real-time Updates**: Order status updates displayed in CLI format
 
-**Order Monitoring**:
-- Real-time order status display (matches CLI format)
-- Order history table
-- Fill details (price, quantity, fee, timestamp) - matches CLI
-- Position updates - matches CLI format
+**2. OMS/Positions Page** (`/live/positions`):
+- **Purpose**: View all positions across venues (like backtest positions view)
+- **Display**:
+  - Aggregated positions by instrument (canonical ID)
+  - Position breakdown by venue
+  - Quantity, average entry price, current price
+  - Unrealized PnL, realized PnL
+  - Position status (open, closed, partial)
+- **Real-time Updates**: Polling every 5 seconds
+- **Filters**: By instrument, venue, strategy
 
-**Strategy Deployment** (`/live/strategies`):
-- Upload strategy configuration (JSON)
-- Deploy strategy to live execution
-- Monitor strategy performance
-- Start/stop strategy execution
-- View strategy logs (matches CLI output)
+**3. Execution Log Page** (`/live/logs`):
+- **Purpose**: Full log of all execution actions (like backtest jobs run/not run)
+- **Display**:
+  - **Orders Executed**: Which orders went forward, status (FILLED, PARTIAL_FILLED)
+  - **Orders Rejected**: Which orders didn't go forward, rejection reasons
+  - **Execution Layer Logs**: Real-time log of what's happening in execution layer
+  - **Timeline View**: Chronological log of all actions
+  - **Filters**: By status (executed/rejected), venue, instrument, time range
+- **Log Format**: Matches CLI output format exactly
+- **Real-time Updates**: Streaming log updates (polling or WebSocket)
+
+**4. Order Details/History Page** (`/live/orders`):
+- **Purpose**: Detailed view of individual orders and order history
+- **Display**:
+  - **Order List Table**: All orders with columns (Order ID, Operation ID, Instrument, Side, Quantity, Status, Venue, Created At)
+  - **Order Details View** (click order):
+    - Order timeline (submitted → risk check → routed → filled/rejected)
+    - Fill details (price, quantity, fee, timestamp for each fill)
+    - Venue-specific order ID
+    - Risk check results (if rejected, show reason)
+    - Routing decision (why this venue was chosen)
+  - **Filters**: By status (PENDING, FILLED, REJECTED, CANCELED), venue, instrument, date range
+  - **Search**: By order ID, operation ID
+- **Real-time Updates**: Order status updates via polling
+- **CLI Format**: Matches CLI output format exactly
+
+**5. Status Page** (`/status`):
+- **Purpose**: Service health and connectivity status
+- **Display**:
+  - Service health (backtest backend, live backend, PostgreSQL, Redis)
+  - GCS bucket connectivity status
+  - Last check timestamp
+  - Connection instructions if services unavailable
+- **Always Accessible**: Available regardless of service status
 
 **CLI Alignment**:
-- Frontend displays match CLI output format exactly
-- Same order status format
-- Same position format
-- Same fill format
-- Same log format
-- Real-time updates via WebSocket or polling
+- All pages display data in CLI output format exactly
+- Same order status format, position format, fill format, log format
+- Ensures consistency between CLI and UI
 
 ---
 

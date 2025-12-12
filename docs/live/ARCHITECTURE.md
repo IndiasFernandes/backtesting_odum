@@ -517,10 +517,10 @@ def route_order(order: UnifiedOrder) -> VenueRoute:
 
 #### 2.3.8 Order Adapter
 
-**Purpose**: Convert between protobuf Order messages and NautilusTrader Order objects.
+**Purpose**: Convert between JSON Order messages (from REST API) and NautilusTrader Order objects.
 
 **Key Functions:**
-- `proto_to_nautilus_order()`: Convert protobuf → NautilusTrader Order
+- `json_to_nautilus_order()`: Convert JSON dict → NautilusTrader Order
 - `nautilus_order_to_execution_result()`: Convert NautilusTrader Order + Fills → ExecutionResult
 - Handle Deribit orders (reject, route to external adapter)
 
@@ -815,9 +815,50 @@ def route_order(order: UnifiedOrder) -> VenueRoute:
 
 ### 5.1 Strategy Service Integration
 
-**Protocol**: Protobuf Order messages over **gRPC** (fastest option for strategy service → live execution). Frontend → Live API uses REST API for UI compatibility.
+**Protocol**: **REST API** (JSON) for strategy service → live execution. Simple, easy to debug, sufficient for most use cases.
 
-**Message Format:**
+**Message Format** (JSON):
+```json
+{
+    "operation_id": "OP-12345",
+    "instrument_key": "BINANCE-FUTURES:PERPETUAL:BTC-USDT@LIN",
+    "side": "BUY",
+    "quantity": "1.0",
+    "price": null,  // Optional for market orders
+    "order_type": "MARKET",  // or "LIMIT"
+    "strategy_id": "momentum-btc-v1",
+    "exec_algorithm": "TWAP",  // Optional: TWAP, VWAP, Iceberg, NORMAL
+    "exec_algorithm_params": {
+        "duration_sec": 300,
+        "max_slices": 10
+    }
+}
+```
+
+**Response Format** (JSON):
+```json
+{
+    "operation_id": "OP-12345",
+    "order_id": "ORD-67890",
+    "status": "ACCEPTED",  // "ACCEPTED", "REJECTED", "FILLED", "CANCELED"
+    "rejection_reason": null,  // If rejected, reason here
+    "fills": [
+        {
+            "fill_id": "FILL-001",
+            "quantity": "0.5",
+            "price": "45000.0",
+            "fee": "2.25",
+            "timestamp": "2025-12-08T10:30:00Z"
+        }
+    ]
+}
+```
+
+**API Endpoint**: `POST /api/orders` (FastAPI)
+
+**Future Improvement**: Consider migrating to **gRPC** if order volume exceeds 100 orders/sec or latency requirements become critical (<5ms). gRPC provides lower latency (~2-5ms vs ~10-20ms) and smaller payloads, but requires more setup and is harder to debug.
+
+**Message Format (Legacy Protobuf reference - if migrating to gRPC):**
 ```protobuf
 message Order {
     string operation_id = 1;
@@ -828,10 +869,7 @@ message Order {
     string strategy_id = 6;
     map<string, string> exec_algorithm_params = 7;  // TWAP, VWAP, etc.
 }
-```
 
-**Response Format:**
-```protobuf
 message ExecutionResult {
     string operation_id = 1;
     string status = 2;  // "FILLED", "REJECTED", "CANCELLED", etc.
@@ -1006,10 +1044,11 @@ execution-services/
 │       └── pages/
 │           ├── BacktestComparisonPage.tsx
 │           ├── BacktestRunnerPage.tsx
-│           ├── LiveDashboardPage.tsx
-│           ├── LiveOrdersPage.tsx
-│           ├── LivePositionsPage.tsx
-│           └── StatusPage.tsx          # Service status dashboard
+│           ├── LiveExecutePage.tsx          # Trade execution form
+│           ├── LiveOrdersPage.tsx           # Order details/history
+│           ├── LivePositionsPage.tsx        # OMS/Positions view
+│           ├── LiveLogsPage.tsx            # Execution logs
+│           └── StatusPage.tsx               # Service status
 └── config/
     └── live_trading_config.json
 ```
@@ -1033,14 +1072,52 @@ execution-services/
 | `odum-postgres` | 5432 | Unified OMS & Position Tracker DB | Live Execution |
 | `odum-redis-live` | 6380 | Live config updates | Live Execution |
 
-### 7.4 Frontend Service Detection
+### 7.4 Frontend Architecture
 
-The frontend automatically detects which services are active and shows/hides pages accordingly. See `FRONTEND_SERVICE_DETECTION.md` for detailed implementation plan.
+**Framework**: React (TypeScript) with Vite  
+**Communication**: REST API (JSON) - Same protocol as strategy service integration  
+**Real-time Updates**: Polling (every 2-5 seconds) - Simple, reliable, sufficient for most use cases
 
-**Key Features:**
-- Service health checks every 30 seconds
+**Frontend Pages**:
+
+1. **Trade Execution Page** (`/live/execute`):
+   - Form-based trade submission (venue, instrument, trade type, order type, quantity, price, execution algorithm)
+   - Generates CLI command according to specs (displayed in real-time)
+   - Submit order via REST API (`POST /api/orders`)
+   - Real-time order status updates in CLI format
+
+2. **OMS/Positions Page** (`/live/positions`):
+   - View all positions across venues (aggregated by instrument)
+   - Position breakdown by venue, PnL, status
+   - Real-time updates via polling
+
+3. **Execution Log Page** (`/live/logs`):
+   - Full log of execution actions
+   - Orders executed vs rejected (with reasons)
+   - Execution layer activity logs
+   - Timeline view, filters by status/venue/instrument/time
+   - Real-time streaming log updates
+
+4. **Order Details/History Page** (`/live/orders`):
+   - Order list table (all orders with status, venue, instrument, quantity, timestamp)
+   - Order details view (click order):
+     - Order timeline (submitted → risk check → routed → filled/rejected)
+     - Fill details (price, quantity, fee, timestamp for each fill)
+     - Venue-specific order ID
+     - Risk check results (if rejected, show reason)
+     - Routing decision (why venue was chosen)
+   - Filters: by status, venue, instrument, date range
+   - Search: by order ID, operation ID
+   - Real-time order status updates
+
+5. **Status Page** (`/status`):
+   - Service health (backtest, live, PostgreSQL, Redis)
+   - GCS bucket connectivity
+   - Connection instructions
+
+**Service Detection**:
+- Automatic detection of active services (backtest, live, or both)
 - Conditional route rendering based on service availability
-- Status page showing all service health and GCS bucket connectivity
 - Navigation menu adapts to available services
 
 ### 7.5 Migration from Current System
