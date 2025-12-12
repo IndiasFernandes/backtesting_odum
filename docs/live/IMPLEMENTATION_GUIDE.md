@@ -11,6 +11,8 @@ You are implementing a **production-grade live execution mechanism** for a unifi
    - Input: `gs://instruments-store-cefi-central-element-323112/` (instruments)
    - Input: `gs://market-data-tick-cefi-central-element-323112/` (market tick data)
    - Output: `gs://execution-store-cefi-central-element-323112/` (execution results)
+     - **Note**: Spec mentions `gs://results-central-element-3-backtest-cefi/` but current implementation uses `execution-store-cefi-central-element-323112/`
+     - Verify bucket name alignment with spec before production deployment
    - Use `download_from_gcs()`, `download_from_gcs_streaming()`, `upload_to_gcs()` from UCS
    - Local filesystem (`data_downloads/`) is **fallback only**, not primary
 
@@ -28,6 +30,9 @@ You are implementing a **production-grade live execution mechanism** for a unifi
      - `positions.parquet`: Position timeline with P&L
      - `equity_curve.parquet`: Portfolio value over time
    - Upload to: `gs://execution-store-cefi-central-element-323112/backtest_results/{run_id}/`
+     - **Note**: Spec section 8 mentions `gs://results-central-element-3-backtest-cefi/` as output bucket
+     - Current implementation uses `execution-store-cefi-central-element-323112/`
+     - **Action Required**: Verify bucket name alignment with spec before production deployment
 
 4. **Consistency with Backtest**:
    - Reuse same execution algorithms: `TWAPExecAlgorithm`, `VWAPExecAlgorithm`, `IcebergExecAlgorithm`
@@ -85,107 +90,25 @@ You are implementing a **production-grade live execution mechanism** for a unifi
 
 ---
 
-## Reference Architecture Documents
+## Related Documentation
 
-### 1. `LIVE_EXECUTION_ARCHITECTURE.md`
-**Purpose**: Detailed architecture and implementation plan
+**Core Documents**:
+- `ROADMAP.md` - Complete implementation roadmap (6 phases, 12 weeks)
+- `FILE_ORGANIZATION.md` - File organization strategy and directory structure
+- `DEVELOPMENT_PROMPT.md` - Quick reference development prompt
 
-**Key Sections**:
-- **Section 1**: Current State Analysis (backtest architecture, user guide pattern, gap analysis)
-- **Section 2**: Architecture Design (high-level architecture, core design principles, component details)
-- **Section 2.3**: Component Details:
-  - 2.3.1: Live Execution Orchestrator
-  - 2.3.2: TradingNode Integration
-  - 2.3.3: External SDK Adapter Framework
-  - 2.3.4: Unified OMS
-  - 2.3.5: Unified Position Tracker
-  - 2.3.6: Pre-Trade Risk Engine
-  - 2.3.7: Smart Order Router
-  - 2.3.8: Order Adapter
-  - 2.3.9: Instrument Converter
-  - 2.3.10: Unified Cloud Services Integration (PRIMARY interface)
-  - 2.3.11: Signal-Driven Execution
-- **Section 3**: Implementation Phases (12-week phased plan)
-- **Section 4**: Key Design Decisions (consistency, unified abstraction, state sync, UCS as primary)
-- **Section 5**: Configuration Examples (TradingNode config, external adapters, risk engine, router, GCS)
-- **Section 6**: Output Schemas (aligned with spec)
-- **Section 7**: Deployment Architecture (Docker Compose profiles, service components, frontend detection, migration)
+**Key Architecture Decisions**:
+- **Deployment**: Separate Services (Docker Compose Profiles) - See `ROADMAP.md` Deployment Architecture section
+- **File Organization**: Clear separation (`backend/live/` vs `backend/backtest/`) - See `FILE_ORGANIZATION.md`
+- **Data Interface**: UCS as PRIMARY interface (not `data_downloads/`)
+- **NautilusTrader**: Use `TradingNode` for live (not `BacktestNode`)
 
 **Critical Points**:
-- UCS is PRIMARY interface (Section 2.3.10, Section 4.4)
-- Signal-driven execution reduces I/O by 94% (Section 2.3.11)
-- Output schemas match backtest spec exactly (Section 6)
-- TradingNode configuration follows NautilusTrader patterns (Section 2.3.2)
-
-### 2. `LIVE_EXECUTION_SUMMARY.md`
-**Purpose**: Executive summary and high-level overview
-
-**Key Sections**:
-- Key Objectives (consistency, multi-venue, unified tracking, production-ready, spec alignment)
-- Architecture Highlights (core components overview)
-- Key Design Decisions (consistency, unified abstraction, state sync, deployment separation)
-- Implementation Phases (6 phases, 12 weeks)
-- Venue Support Matrix (CeFi, TradFi, DeFi, Sports)
-- Configuration Example (JSON config structure)
-- Output Schemas (aligned with spec)
-- External System Integration (strategy service protocol, venue API management)
-- GCS Buckets (from spec, UCS access method)
-- Migration from Current System (zero-downtime strategy)
-
-**Critical Points**:
-- UCS is PRIMARY data interface (Section "GCS Buckets")
-- Results uploaded to `gs://execution-store-cefi-central-element-323112/` via UCS
-- Local `data_downloads/` is fallback only
-
-### 3. `FRONTEND_SERVICE_DETECTION.md`
-**Purpose**: Frontend service detection and status page implementation plan
-
-**Key Sections**:
-- Service Architecture (Backtest Backend, Live Backend, PostgreSQL, Redis, Frontend)
-- Docker Compose Profiles (`backtest`, `live`, `both`)
-- Service Detection Hook (`useServiceDetection.ts`)
-- Status Page (`StatusPage.tsx`)
-- Conditional Route Rendering (`App.tsx`)
-- Conditional Navigation (`Layout.tsx`)
-- Backend Health Endpoints (`/api/health`, `/api/health/database`, `/api/health/redis`, `/api/health/gcs`)
-- Implementation Checklist (step-by-step guide)
-- Migration from Current System (3-phase migration strategy)
-
-**Critical Points**:
-- Health endpoints check GCS bucket connectivity via UCS
-- Frontend adapts to active services dynamically
-- Status page shows all service health and GCS connectivity
-
-### 4. `ARCHITECTURE.md`
-**Purpose**: Current backtest system architecture (reference implementation)
-
-**Key Sections**:
-- Data & Unified Cloud Services Model (UCS as PRIMARY)
-- Data Conversion & Catalog Registration (automatic conversion from GCS via UCS)
-- Backtesting Flow (BacktestNode workflow)
-- Configuration (external JSON, UCS env vars)
-
-**Critical Points**:
-- `backend/ucs_data_loader.py` uses UCS for all data loading
-- `backend/results.py` uses UCS for all result uploads
-- `UNIFIED_CLOUD_SERVICES_USE_DIRECT_GCS=true` ensures direct GCS API
-
-### 5. `BACKTEST_SPEC.md`
-**Purpose**: CeFi Backtesting Execution Infrastructure — Final Specification
-
-**Key Sections**:
-- System Architecture Overview (service responsibilities, data flow)
-- Data Inputs (instrument definitions, market tick data, strategy signals)
-- Execution Engine (NautilusTrader integration, backtest workflow, execution outputs)
-- Unified Cloud Services (required functions, byte-range streaming)
-- Output Schemas (summary.json, orders.parquet, fills.parquet, positions.parquet, equity_curve.parquet)
-- GCS Bucket Reference (input/output buckets, file sizes)
-
-**Critical Points**:
-- UCS is required for all GCS operations
+- UCS is PRIMARY interface for all GCS operations
 - Signal-driven execution reduces I/O by 94%
-- Output schemas are mandatory and must match exactly
-- GCS buckets: `instruments-store-cefi-central-element-323112`, `market-data-tick-cefi-central-element-323112`, `execution-store-cefi-central-element-323112`
+- Output schemas match backtest spec exactly
+- TradingNode configuration follows NautilusTrader patterns
+- Results uploaded to `gs://execution-store-cefi-central-element-323112/` via UCS
 
 ---
 
@@ -258,12 +181,14 @@ node.subscribe("order.cancelled", on_order_cancelled)
 
 ## Current Implementation Reference
 
-### 1. `backend/ucs_data_loader.py`
+### 1. `backend/data/loader.py` (UCSDataLoader)
 **Purpose**: Unified Cloud Services data loader
 
+**Current Location**: `backend/data/loader.py`
+
 **Key Functions**:
-- `load_data_from_gcs()`: Loads data from GCS via UCS
-- `load_data_from_local()`: Fallback to local filesystem
+- `load_trades()`: Loads trade data from GCS via UCS
+- `load_book_snapshots()`: Loads book snapshot data from GCS via UCS
 - Uses `UnifiedCloudService` for all GCS operations
 - Checks FUSE mount status, falls back to direct GCS API
 
@@ -272,8 +197,10 @@ node.subscribe("order.cancelled", on_order_cancelled)
 - `UNIFIED_CLOUD_SERVICES_USE_DIRECT_GCS=true` uses direct GCS API
 - Local filesystem is fallback only
 
-### 2. `backend/results.py`
+### 2. `backend/results/serializer.py` (ResultSerializer)
 **Purpose**: Result serialization and upload
+
+**Current Location**: `backend/results/serializer.py`
 
 **Key Functions**:
 - `serialize_backtest_results()`: Converts results to JSON/Parquet
@@ -285,22 +212,28 @@ node.subscribe("order.cancelled", on_order_cancelled)
 - No local persistence required for production
 - Output schemas match spec exactly
 
-### 3. `backend/backtest_engine.py`
+### 3. `backend/core/engine.py` (BacktestEngine)
 **Purpose**: Backtest orchestration (reference for live execution)
+
+**Current Location**: `backend/core/engine.py`
 
 **Key Patterns**:
 - Uses `BacktestNode` for backtest execution
 - External JSON configuration
 - Automatic data conversion
 - Execution algorithm support
+- Coordinates: validation, data loading, instrument creation, node configuration, execution, result extraction
 
 **Critical Points**:
 - Live execution should mirror this pattern but use `TradingNode` instead
 - Same configuration schema
 - Same execution algorithms
+- Current location: `backend/core/engine.py` (may move to `backend/backtest/engine.py` later)
 
-### 4. `backend/execution_algorithms.py`
+### 4. `backend/execution/algorithms.py`
 **Purpose**: Execution algorithms (TWAP, VWAP, Iceberg)
+
+**Current Location**: `backend/execution/algorithms.py`
 
 **Key Classes**:
 - `TWAPExecAlgorithm`
@@ -310,27 +243,37 @@ node.subscribe("order.cancelled", on_order_cancelled)
 **Critical Points**:
 - These algorithms must be reused in live execution
 - Same interface (`ExecAlgorithm`) for both backtest and live
+- Shared component - used by both backtest and live
 
-### 5. `backend/smart_router.py`
-**Purpose**: Smart order routing
+### 5. `backend/execution/router.py`
+**Purpose**: Smart order routing (base logic)
+
+**Current Location**: `backend/execution/router.py`
 
 **Key Functions**:
-- `select_optimal_venue()`: Selects best venue based on fees, liquidity, latency
-- Supports both NautilusTrader and external venues
+- Base routing logic for venue selection
+- Fee, liquidity, latency calculations
 
 **Critical Points**:
-- Must be extended for live execution
-- Same routing logic as backtest
+- Shared base logic - used by both backtest and live
+- Live execution will extend this in `backend/live/router.py` with live-specific logic
+- Same routing principles as backtest
 
 ---
 
 ## Implementation Checklist
 
 ### Phase 1: Core Infrastructure (Weeks 1-2)
-- [ ] Create module structure: `backend/live_execution/`
+- [ ] Create module structure: `backend/live/` (see `docs/live/FILE_ORGANIZATION.md`)
 - [ ] Set up PostgreSQL schema (`unified_orders`, `unified_positions`)
 - [ ] Create configuration framework (external JSON, similar to backtest)
 - [ ] Set up UCS integration (verify GCS bucket access)
+
+**File Organization**: Follow clear separation strategy:
+- `backend/live/` - Live-specific components
+- `backend/backtest/` - Backtest-specific components (existing)
+- `backend/execution/`, `backend/data/`, etc. - Shared components
+- See `docs/live/FILE_ORGANIZATION.md` for complete structure
 
 ### Phase 2: TradingNode Integration (Weeks 3-4)
 - [ ] Create `LiveTradingNode` wrapper class
@@ -451,11 +394,12 @@ node.subscribe("order.cancelled", on_order_cancelled)
 
 ## Next Steps
 
-1. **Review Architecture**: Review `LIVE_EXECUTION_ARCHITECTURE.md` for detailed design
-2. **Set Up Infrastructure**: Create module structure, database schema, configuration framework
-3. **Begin Phase 1**: Start with core infrastructure setup
-4. **Iterate**: Follow phased implementation plan, test incrementally
-5. **Validate**: Ensure alignment with spec, NautilusTrader docs, and current implementation
+1. **Review Roadmap**: See `ROADMAP.md` for complete implementation roadmap
+2. **Review File Organization**: See `FILE_ORGANIZATION.md` for directory structure
+3. **Set Up Infrastructure**: Create module structure, database schema, configuration framework
+4. **Begin Phase 1**: Start with core infrastructure setup
+5. **Iterate**: Follow phased implementation plan, test incrementally
+6. **Validate**: Ensure alignment with spec, NautilusTrader docs, and current implementation
 
 ---
 

@@ -271,26 +271,46 @@ Return Response
 - ✅ Comprehensive error handling
 - ✅ Logging at appropriate levels
 
-**New Directory Structure:**
+**New Directory Structure** (see `docs/live/FILE_ORGANIZATION.md` for complete organization):
+
 ```
-backend/live/
-├── __init__.py
-├── engine.py              # LiveEngine (main orchestrator)
-├── trading_node.py        # TradingNode configuration
-├── orchestrator.py         # Execution orchestrator
-├── oms.py                 # Unified OMS
-├── positions.py           # Position tracker
-├── risk.py                # Risk engine
-├── router.py              # Smart router (extends execution/router.py)
-├── adapters/              # External SDK adapters
+backend/
+├── backtest/              # Backtest-specific (existing)
+│   └── engine.py         # BacktestEngine
+│
+├── live/                  # Live-specific (NEW)
 │   ├── __init__.py
-│   ├── base.py
-│   ├── deribit.py
-│   └── registry.py
-└── api/                   # Live trading API endpoints
-    ├── __init__.py
-    └── live_server.py    # FastAPI endpoints for live trading
+│   ├── engine.py         # LiveEngine (main orchestrator)
+│   ├── trading_node.py   # TradingNode configuration
+│   ├── orchestrator.py   # Execution orchestrator
+│   ├── oms.py            # Unified OMS
+│   ├── positions.py      # Position tracker
+│   ├── risk.py           # Risk engine
+│   ├── router.py         # Smart router (live-specific)
+│   └── adapters/         # External SDK adapters
+│       ├── __init__.py
+│       ├── base.py
+│       ├── deribit.py
+│       └── registry.py
+│
+├── execution/             # Shared execution components
+│   ├── algorithms.py     # TWAP, VWAP, Iceberg (shared)
+│   └── router.py         # Base router logic (shared)
+│
+├── api/                   # API endpoints
+│   ├── server.py         # Backtest API (port 8000)
+│   └── live_server.py    # Live API (port 8001) - NEW
+│
+└── ... (other shared: data/, instruments/, config/, results/)
 ```
+
+**Key Principles**:
+- ✅ Clear separation: `backend/backtest/` vs `backend/live/`
+- ✅ Shared components: `backend/execution/`, `backend/data/`, etc.
+- ✅ No cross-imports: Shared code never imports from backtest/ or live/
+- ✅ Service-specific entry points: Separate API servers
+
+See `docs/live/FILE_ORGANIZATION.md` for complete file organization strategy, import patterns, and migration guide.
 
 ### 3. Integration Points
 

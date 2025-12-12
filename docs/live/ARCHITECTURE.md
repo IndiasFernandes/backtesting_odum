@@ -530,31 +530,47 @@ def route_order(order: UnifiedOrder) -> VenueRoute:
 
 **Tasks:**
 1. **Create Live Execution Module Structure**
+   
+   **File Organization**: Clear separation between live and backtest code (see `docs/live/FILE_ORGANIZATION.md`)
+   
    ```
-   backend/live_execution/
-   ├── __init__.py
-   ├── orchestrator.py          # LiveExecutionOrchestrator
-   ├── trading_node.py          # TradingNode wrapper/integration
-   ├── adapters/
+   backend/
+   ├── backtest/                # Backtest-specific (existing)
+   │   └── engine.py           # BacktestEngine
+   │
+   ├── live/                    # Live-specific (NEW)
    │   ├── __init__.py
-   │   ├── base.py              # ExternalVenueAdapter base class
-   │   ├── registry.py          # AdapterRegistry
-   │   └── deribit.py           # DeribitAdapter (example)
-   ├── oms/
-   │   ├── __init__.py
-   │   ├── unified_oms.py       # UnifiedOrderManager
-   │   └── models.py            # Order models
-   ├── positions/
-   │   ├── __init__.py
-   │   ├── unified_tracker.py   # UnifiedPositionTracker
-   │   └── models.py            # Position models
-   ├── router/
-   │   ├── __init__.py
-   │   └── smart_router.py      # Enhanced SmartOrderRouter
-   └── risk/
-       ├── __init__.py
-       └── pre_trade_risk.py    # PreTradeRiskEngine
+   │   ├── engine.py           # LiveEngine wrapper
+   │   ├── orchestrator.py     # LiveExecutionOrchestrator
+   │   ├── trading_node.py     # TradingNode wrapper/integration
+   │   ├── oms.py              # UnifiedOrderManager
+   │   ├── positions.py        # UnifiedPositionTracker
+   │   ├── risk.py             # PreTradeRiskEngine
+   │   ├── router.py           # Live-specific Smart Router
+   │   └── adapters/           # External SDK adapters
+   │       ├── __init__.py
+   │       ├── base.py         # ExternalVenueAdapter base class
+   │       ├── registry.py     # AdapterRegistry
+   │       └── deribit.py      # DeribitAdapter (example)
+   │
+   ├── execution/               # Shared execution components
+   │   ├── algorithms.py       # TWAP, VWAP, Iceberg (shared)
+   │   └── router.py           # Base router logic (shared)
+   │
+   ├── api/                     # API endpoints
+   │   ├── server.py           # Backtest API (port 8000)
+   │   └── live_server.py      # Live API (port 8001) - NEW
+   │
+   └── ... (other shared modules: data/, instruments/, config/, results/)
    ```
+   
+   **Key Principles**:
+   - ✅ Clear separation: `backend/backtest/` vs `backend/live/`
+   - ✅ Shared components: `backend/execution/`, `backend/data/`, etc.
+   - ✅ No cross-imports: Shared code never imports from backtest/ or live/
+   - ✅ Service-specific entry points: Separate API servers
+   
+   See `docs/live/FILE_ORGANIZATION.md` for complete file organization strategy.
 
 2. **Database Schema Setup**
    - Create PostgreSQL tables (`unified_orders`, `unified_positions`)
@@ -918,24 +934,45 @@ docker-compose --profile backtest --profile live up -d
 
 ### 7.2 Container Structure
 
+**File Organization**: Clear separation between live and backtest code (see `docs/live/FILE_ORGANIZATION.md`)
+
 ```
 execution-services/
 ├── docker-compose.yml              # Base services
 ├── docker-compose.profiles.yml     # Profile-based deployment
 ├── backend/
 │   ├── Dockerfile                  # Shared Dockerfile
-│   ├── api/
+│   │
+│   ├── backtest/                   # Backtest-specific code
+│   │   └── engine.py              # BacktestEngine
+│   │
+│   ├── live/                       # Live-specific code
+│   │   ├── engine.py              # LiveEngine
+│   │   ├── orchestrator.py        # LiveExecutionOrchestrator
+│   │   ├── trading_node.py        # TradingNode wrapper
+│   │   ├── oms.py                 # UnifiedOrderManager
+│   │   ├── positions.py           # UnifiedPositionTracker
+│   │   ├── risk.py                # PreTradeRiskEngine
+│   │   ├── router.py              # Live-specific router
+│   │   └── adapters/              # External SDK adapters
+│   │       ├── base.py
+│   │       ├── deribit.py
+│   │       └── registry.py
+│   │
+│   ├── execution/                  # Shared execution components
+│   │   ├── algorithms.py          # TWAP, VWAP, Iceberg
+│   │   └── router.py              # Base router logic
+│   │
+│   ├── api/                        # API endpoints
 │   │   ├── server.py              # Backtest API (port 8000)
-│   │   └── live_execution_server.py  # Live API (port 8001)
-│   ├── live_execution/
-│   │   ├── orchestrator.py
-│   │   ├── trading_node.py
-│   │   ├── adapters/
-│   │   ├── oms/
-│   │   ├── positions/
-│   │   ├── router/
-│   │   └── risk/
+│   │   └── live_server.py         # Live API (port 8001)
+│   │
+│   ├── data/                       # Shared data management
+│   ├── instruments/                # Shared instrument management
+│   ├── config/                     # Shared configuration
+│   ├── results/                    # Shared result processing
 │   └── requirements.txt
+│
 ├── frontend/
 │   └── src/
 │       ├── hooks/
@@ -950,6 +987,15 @@ execution-services/
 └── config/
     └── live_trading_config.json
 ```
+
+**Service Entry Points**:
+- **Backtest Service**: `uvicorn backend.api.server:app --port 8000`
+- **Live Service**: `uvicorn backend.api.live_server:app --port 8001`
+
+**Import Boundaries**:
+- Backtest API imports from: `backend.backtest.*`, `backend.execution.*`, `backend.data.*`, etc.
+- Live API imports from: `backend.live.*`, `backend.execution.*`, `backend.instruments.*`, etc.
+- Shared modules never import from `backend.backtest.*` or `backend.live.*`
 
 ### 7.3 Service Components
 
@@ -1126,7 +1172,27 @@ LIVE_TRADING_CONFIG_PATH=/app/config/live_trading_config.json
 
 ---
 
-## 10. Conclusion
+## 10. File Organization
+
+### 10.1 Separation Strategy
+
+**Clear separation** between live and backtest code ensures maintainability and clarity:
+
+- **Backtest Code**: `backend/backtest/` - All backtest-specific components
+- **Live Code**: `backend/live/` - All live-specific components  
+- **Shared Code**: `backend/execution/`, `backend/data/`, `backend/instruments/`, etc. - Used by both
+
+**Key Principles**:
+1. ✅ Clear directory boundaries (`backend/backtest/` vs `backend/live/`)
+2. ✅ No cross-imports (shared code never imports from backtest/ or live/)
+3. ✅ Service-specific entry points (`backend/api/server.py` vs `backend/api/live_server.py`)
+4. ✅ Shared components clearly identified and documented
+
+**See**: `docs/live/FILE_ORGANIZATION.md` for complete file organization strategy, import patterns, and migration guide.
+
+---
+
+## 11. Conclusion
 
 This architecture provides a robust, extensible foundation for live execution that:
 
@@ -1135,6 +1201,7 @@ This architecture provides a robust, extensible foundation for live execution th
 3. **Unified Tracking**: Single source of truth for orders and positions
 4. **Extensible**: Easy to add new venues and features
 5. **Production-Ready**: Fault tolerance, monitoring, and observability built-in
+6. **Clear Organization**: Well-separated file structure for maintainability
 
 The phased implementation plan allows for incremental development and testing, reducing risk and enabling early validation of key components.
 
