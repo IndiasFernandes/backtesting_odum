@@ -23,47 +23,37 @@ services:
       # Mount secrets directory for GCS authentication
       - ./.secrets:/app/.secrets:ro
     environment:
-      # ------------------------------------------------------------------------------
-      # Google Cloud Platform (GCP) Authentication
-      # ------------------------------------------------------------------------------
-      # GCP Project ID (required for GCS operations)
-      - GCP_PROJECT_ID=${GCP_PROJECT_ID:-central-element-323112}
-      # Path to GCP service account JSON key file (defaults to .secrets/gcs/gcs-service-account.json)
+      # All variables read from .env file (docker-compose automatically loads .env)
+      # SECURITY: Sensitive values (project IDs, bucket names) MUST be set in .env - no defaults
+      # Format: ${VAR:-default} means use VAR from .env if set, otherwise use default
+      # Format: ${VAR} means VAR is REQUIRED - application validates at startup (start.sh)
+      # Note: Docker Compose sets empty string if VAR not found, but start.sh validates and fails fast
+      
+      # Non-sensitive configuration (safe defaults)
+      - UNIFIED_CLOUD_LOCAL_PATH=${UNIFIED_CLOUD_LOCAL_PATH:-/app/data_downloads}
+      - UNIFIED_CLOUD_SERVICES_USE_PARQUET=${UNIFIED_CLOUD_SERVICES_USE_PARQUET:-true}
+      - UNIFIED_CLOUD_SERVICES_USE_DIRECT_GCS=${UNIFIED_CLOUD_SERVICES_USE_DIRECT_GCS:-true}
+      - DATA_CATALOG_PATH=${DATA_CATALOG_PATH:-/app/backend/data/parquet}
+      
+      # REQUIRED: GCS credentials (path to service account JSON file)
+      # Default path is OK as it's just a filesystem path, not sensitive data
       - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-/app/.secrets/gcs/gcs-service-account.json}
       
-      # ------------------------------------------------------------------------------
-      # Input Data Storage (Market Data)
-      # ------------------------------------------------------------------------------
-      # Local path for data when using FUSE mount or local filesystem
-      - UNIFIED_CLOUD_LOCAL_PATH=/app/data_downloads
-      # Use Parquet format for data (always true for this system)
-      - UNIFIED_CLOUD_SERVICES_USE_PARQUET=true
-      # Use direct GCS API access instead of FUSE mount (recommended)
-      - UNIFIED_CLOUD_SERVICES_USE_DIRECT_GCS=true
-      # GCS bucket containing raw market data Parquet files (required)
-      - UNIFIED_CLOUD_SERVICES_GCS_BUCKET=${UNIFIED_CLOUD_SERVICES_GCS_BUCKET:-}
+      # REQUIRED: GCP Project ID (MUST be set in .env - no default for security)
+      # This is sensitive infrastructure information - should not be hardcoded
+      - GCP_PROJECT_ID=${GCP_PROJECT_ID}
       
-      # ------------------------------------------------------------------------------
-      # Backtest Catalog Storage (NautilusTrader Catalog)
-      # ------------------------------------------------------------------------------
-      # Path to catalog root directory (required)
-      - DATA_CATALOG_PATH=/app/backend/data/parquet
+      # REQUIRED: GCS bucket for UCS (market data - input, MUST be set in .env)
+      # Bucket names are sensitive infrastructure information
+      - UNIFIED_CLOUD_SERVICES_GCS_BUCKET=${UNIFIED_CLOUD_SERVICES_GCS_BUCKET}
       
-      # ------------------------------------------------------------------------------
-      # Backtest Results Storage (Output)
-      # ------------------------------------------------------------------------------
-      # GCS bucket for storing backtest results (required)
-      # Used by: backend/results/serializer.py
-      - EXECUTION_STORE_GCS_BUCKET=${EXECUTION_STORE_GCS_BUCKET:-execution-store-cefi-central-element-323112}
+      # REQUIRED: GCS bucket for backtest results (output, MUST be set in .env)
+      # Bucket names are sensitive infrastructure information
+      - EXECUTION_STORE_GCS_BUCKET=${EXECUTION_STORE_GCS_BUCKET}
       
-      # ------------------------------------------------------------------------------
-      # GCS FUSE Mount Configuration (Optional)
-      # ------------------------------------------------------------------------------
-      # Enable GCS FUSE mounting (set to 'true' to use FUSE instead of direct GCS API)
+      # Optional: GCS FUSE configuration (safe defaults)
       - USE_GCS_FUSE=${USE_GCS_FUSE:-false}
-      # GCS bucket name for FUSE mounting (only needed if USE_GCS_FUSE=true)
       - GCS_FUSE_BUCKET=${GCS_FUSE_BUCKET:-}
-      # GCS Service Account Key for FUSE mounting (usually not needed)
       - GCS_SERVICE_ACCOUNT_KEY=${GCS_SERVICE_ACCOUNT_KEY:-}
     # Use start.sh which handles FUSE mounting
     command: bash /app/backend/scripts/start.sh
