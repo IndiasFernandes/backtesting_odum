@@ -35,7 +35,28 @@
   - [x] Create asyncpg connection pool manager (`backend/live/database.py`)
   - [x] Use SQLAlchemy for schema definition and migrations
   - [x] Use asyncpg directly for execution-critical queries (raw SQL for performance)
-- [ ] Create configuration framework (external JSON, similar to backtest) - **Phase 2**
+  - [x] Enhanced schema with fields for OMS, Risk Engine, Smart Router:
+    - [x] `order_type` (MARKET/LIMIT)
+    - [x] `exec_algorithm` (TWAP/VWAP/ICEBERG/NORMAL)
+    - [x] `exec_algorithm_params` (JSONB)
+    - [x] `rejection_reason`, `error_message` (for risk engine)
+    - [x] `time_in_force` (GTC/IOC/FOK)
+    - [x] Performance indexes (strategy_id, created_at, status+strategy, venue+status)
+  - [x] **Unified schema for all venue types** (CeFi, DeFi, TradFi, Sports):
+    - [x] `operation` field (trade, supply, borrow, stake, withdraw, swap, transfer, bet)
+    - [x] `side` expanded (BUY, SELL, SUPPLY, BORROW, STAKE, WITHDRAW, BACK, LAY)
+    - [x] DeFi fields: `tx_hash`, `gas_used`, `gas_price_gwei`, `contract_address`, `source_token`, `target_token`, `max_slippage`
+    - [x] Atomic transaction fields: `atomic_group_id`, `sequence_in_group`
+    - [x] Sports betting fields: `odds`, `selection`, `potential_payout`
+    - [x] Transfer fields: `source_venue`, `target_venue`
+    - [x] Position tracking: `expected_deltas` (JSONB)
+    - [x] Metadata: `metadata` (JSONB)
+    - [x] Indexes: operation, atomic_group, tx_hash, operation+status
+- [x] **Create configuration framework** (`backend/live/config/loader.py`):
+  - [x] Load JSON configuration files
+  - [x] Environment variable substitution (${VAR} and ${VAR:-default})
+  - [x] Validate configuration structure
+  - [x] Support for trading_node, risk_engine, router, external_adapters sections
 - [x] Set up UCS integration (verify GCS bucket access) - **Already working via existing setup**
 - [x] Create `backend/api/live_server.py` skeleton
 - [x] **Create Docker Compose configuration with 3 profiles** (backward compatible):
@@ -54,13 +75,16 @@
 
 **Deliverables**:
 - ✅ Git workflow established (`feature/live-execution` branch)
-- ✅ `backend/live/` directory structure created
-- ✅ PostgreSQL database schema deployed
-- ✅ Configuration loader for live execution
-- ✅ UCS integration verified (GCS bucket access)
-- ✅ Basic API server responds on port 8001
-- ✅ Docker Compose file with 3 profiles working
-- ✅ All 3 deployment modes tested (`backtest`, `live`, `both`)
+- ✅ `backend/live/` directory structure created (13 files)
+- ✅ PostgreSQL database schema deployed (2 migrations applied)
+- ✅ Enhanced database schema with OMS/Risk/Router fields (order_type, exec_algorithm, etc.)
+- ✅ Performance indexes created (strategy_id, created_at, composite indexes)
+- ✅ Database operations tested (asyncpg pool, raw SQL queries)
+- ✅ Configuration framework created (`backend/live/config/loader.py`)
+- ✅ UCS integration verified (GCS bucket access via existing setup)
+- ✅ Basic API server responds on port 8001 (health check working)
+- ✅ Docker Compose file with 3 profiles working (`backtest`, `live`, `both`)
+- ✅ All 3 deployment modes tested and verified
 
 **Success Criteria**:
 - [x] `feature/live-execution` branch created
@@ -68,7 +92,9 @@
 - [x] Alembic migrations can create/update database schema
 - [x] asyncpg connection pool initialized and working
 - [x] Can execute raw SQL queries via asyncpg for performance-critical operations
-- [ ] Can load configuration from JSON - **Phase 2**
+- [x] Can load configuration from JSON with environment variable substitution
+- [x] Database schema supports all OMS, Risk Engine, Smart Router requirements
+- [x] Performance indexes optimized for risk engine queries (velocity, position limits)
 - [x] Can access GCS buckets via UCS (via existing setup)
 - [x] Basic API server responds on port 8001
 - [x] **Profile structure**: 3 profiles (`backtest`, `live`, `both`) - no default

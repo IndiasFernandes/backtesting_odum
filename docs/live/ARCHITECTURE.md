@@ -391,28 +391,81 @@ class AdapterRegistry:
 
 **SQLAlchemy Model** (`backend/live/models.py`):
 ```python
-from sqlalchemy import Column, String, Numeric, DateTime, JSON
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy import Column, String, Numeric, DateTime, JSON, Integer
+from sqlalchemy.orm import DeclarativeBase
 
-Base = declarative_base()
+class Base(DeclarativeBase):
+    pass
 
 class UnifiedOrder(Base):
+    """Unified order tracking across all venues (CeFi, DeFi, TradFi, Sports)."""
+    
     __tablename__ = 'unified_orders'
     
+    # Core identification
     operation_id = Column(String(255), primary_key=True)
+    operation = Column(String(20), nullable=False)  # trade, supply, borrow, stake, withdraw, swap, transfer, bet
     canonical_id = Column(String(255), nullable=False)
     venue = Column(String(100), nullable=False)
     venue_type = Column(String(20), nullable=False)  # 'NAUTILUS' or 'EXTERNAL_SDK'
     venue_order_id = Column(String(255))
-    status = Column(String(50), nullable=False)
-    side = Column(String(10), nullable=False)
+    
+    # Order status and execution
+    status = Column(String(50), nullable=False)  # PENDING, SUBMITTED, FILLED, CANCELLED, REJECTED
+    side = Column(String(20), nullable=False)  # BUY, SELL, SUPPLY, BORROW, STAKE, WITHDRAW, BACK, LAY
     quantity = Column(Numeric(36, 18), nullable=False)
     price = Column(Numeric(36, 18))
-    fills = Column(JSON)  # JSONB in PostgreSQL
+    order_type = Column(String(20), nullable=False)  # MARKET or LIMIT
+    time_in_force = Column(String(20))
+    exec_algorithm = Column(String(20))  # TWAP, VWAP, ICEBERG, NORMAL
+    exec_algorithm_params = Column(JSON)  # JSONB: algorithm-specific parameters
+    fills = Column(JSON)  # JSONB: array of fill objects
+    expected_deltas = Column(JSON)  # JSONB: {instrument_key: delta} for position tracking
+    
+    # Atomic transactions (DeFi)
+    atomic_group_id = Column(String(255))
+    sequence_in_group = Column(Integer)
+    
+    # DeFi-specific fields
+    tx_hash = Column(String(66))  # Blockchain transaction hash
+    gas_used = Column(Integer)
+    gas_price_gwei = Column(Numeric(18, 9))
+    contract_address = Column(String(42))
+    source_token = Column(String(20))
+    target_token = Column(String(20))
+    max_slippage = Column(Numeric(10, 6))
+    
+    # Sports betting specific
+    odds = Column(Numeric(10, 4))
+    selection = Column(String(50))  # Home/Draw/Away, Over/Under, Yes/No
+    potential_payout = Column(Numeric(36, 18))
+    
+    # Transfer fields
+    source_venue = Column(String(100))
+    target_venue = Column(String(100))
+    
+    # Risk and strategy
     strategy_id = Column(String(255))
+    rejection_reason = Column(String(500))
+    error_message = Column(String(1000))
+    order_metadata = Column('metadata', JSON)  # JSONB: Additional metadata
+    
+    # Timestamps
     created_at = Column(DateTime, nullable=False)
     updated_at = Column(DateTime, nullable=False)
 ```
+
+**Database Indexes** (for performance):
+- `idx_orders_operation` - Operation type queries (trade, swap, bet, etc.)
+- `idx_orders_atomic_group` - Atomic transaction queries
+- `idx_orders_tx_hash` - DeFi transaction lookups
+- `idx_orders_operation_status` - Composite index for operation+status queries
+- `idx_orders_strategy` - Risk engine queries by strategy
+- `idx_orders_created_at` - Velocity checks (orders per second/minute)
+- `idx_orders_status_strategy` - Composite index for status+strategy queries
+- `idx_orders_venue_status` - Composite index for venue+status queries
+- `idx_orders_instrument` - Instrument-based queries
+- `idx_orders_status` - Status-based queries
 
 **asyncpg Execution** (`backend/live/oms.py`):
 ```python
