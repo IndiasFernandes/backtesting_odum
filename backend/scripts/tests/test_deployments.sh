@@ -1,6 +1,6 @@
 #!/bin/bash
 # Test script for 3 deployment modes
-# Usage: ./test_deployments.sh
+# Usage: ./backend/scripts/tests/test_deployments.sh
 
 set -e  # Exit on error
 

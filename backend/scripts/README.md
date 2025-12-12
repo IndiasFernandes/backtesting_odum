@@ -47,10 +47,12 @@ backend/scripts/
 ### Setup Scripts
 - `setup_env.sh` - Environment variable setup
 - `setup_ucs.sh` - Unified Cloud Services setup
+- `setup_local_dev.sh` - Local development environment setup (installs packages)
 - `verify_secrets.sh` - GCS credentials verification
 
 ### Test Scripts (`tests/`)
 - `test_docker_infrastructure.sh` - Docker infrastructure tests
+- `test_deployments.sh` - Tests all 3 deployment modes (backtest, live, both)
 - `test_running_services.sh` - Service health tests
 - `test_cli_alignment.sh` - CLI alignment tests
 - `test_gcs_backtest.sh` - GCS backtest tests
@@ -77,8 +79,17 @@ backend/scripts/
 # Run all infrastructure tests
 ./backend/scripts/tests/test_docker_infrastructure.sh
 
+# Test deployment modes (backtest, live, both)
+./backend/scripts/tests/test_deployments.sh
+
 # Run service health tests
 ./backend/scripts/tests/test_running_services.sh
+```
+
+### Running Setup Scripts
+```bash
+# Setup local development environment
+./backend/scripts/setup_local_dev.sh
 ```
 
 ### Running Utilities

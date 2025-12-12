@@ -10,9 +10,9 @@ This directory contains testing guides, plans, and results for the live executio
 
 ## Testing Scripts
 
-- **`test_deployments.sh`** - Automated test script (located in project root)
+- **`backend/scripts/tests/test_deployments.sh`** - Automated test script
   - Tests all 3 deployment modes automatically
-  - Usage: `./test_deployments.sh`
+  - Usage: `./backend/scripts/tests/test_deployments.sh`
 
 ## Deployment Modes
 

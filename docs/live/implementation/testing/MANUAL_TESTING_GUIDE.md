@@ -380,10 +380,10 @@ echo ""
 echo "🎉 All tests passed!"
 ```
 
-Save as `test_deployments.sh`, make executable, and run:
+The script is located at `backend/scripts/tests/test_deployments.sh`. Make it executable and run:
 ```bash
-chmod +x test_deployments.sh
-./test_deployments.sh
+chmod +x backend/scripts/tests/test_deployments.sh
+./backend/scripts/tests/test_deployments.sh
 ```
 
 ---
