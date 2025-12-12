@@ -2,6 +2,8 @@
 
 services:
   backend:
+    # No profiles - runs by default for backward compatibility
+    # Can be excluded with: docker-compose --profile live up -d (live only)
     build:
       context: .
       dockerfile: backend/Dockerfile
@@ -59,6 +61,7 @@ services:
     #       cpus: '1.0'
 
   frontend:
+    # No profiles - runs by default for backward compatibility
     build:
       context: .
       dockerfile: frontend/Dockerfile
@@ -72,12 +75,13 @@ services:
       - ./external/data_downloads/configs:/app/external/data_downloads/configs:ro
     environment:
       - VITE_API_URL=http://localhost:8000  # Use localhost for browser access
+      - VITE_BACKTEST_API_URL=http://backend:8000
+      - VITE_LIVE_API_URL=http://live-backend:8001
       - DOCKER=true  # Flag to indicate running in Docker
       - BACKEND_PROXY_URL=http://backend:8000  # Backend service name for proxy
     networks:
       - backtest-network
-    depends_on:
-      - backend
+    # Note: depends_on removed - frontend works with or without backend/live-backend
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:5173"]
       interval: 30s
@@ -113,8 +117,81 @@ services:
     # Optional: Add restart policy for production
     # restart: unless-stopped
 
+  # Live Execution Service (port 8001) - NEW
+  live-backend:
+    profiles: ["live", "both"]
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: odum-live-backend
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./backend:/app/backend
+      - ./data_downloads:/app/data_downloads:ro
+      - ./backend/data/parquet:/app/backend/data/parquet
+      - ./external/data_downloads/configs:/app/external/data_downloads/configs:ro
+      - ./external/unified-cloud-services:/app/external/unified-cloud-services:ro
+      - ./.secrets:/app/.secrets:ro
+    environment:
+      - UNIFIED_CLOUD_LOCAL_PATH=/app/data_downloads
+      - UNIFIED_CLOUD_SERVICES_USE_PARQUET=true
+      - UNIFIED_CLOUD_SERVICES_USE_DIRECT_GCS=true
+      - DATA_CATALOG_PATH=/app/backend/data/parquet
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-/app/.secrets/gcs/gcs-service-account.json}
+      - DATABASE_URL=postgresql://user:pass@postgres:5432/execution_db
+      - REDIS_URL=redis://redis-live:6379/0
+    command: uvicorn backend.api.live_server:app --host 0.0.0.0 --port 8001
+    depends_on:
+      - postgres
+      - redis-live
+    networks:
+      - backtest-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # PostgreSQL Database - NEW (Local Development Only)
+  postgres:
+    profiles: ["live", "both"]
+    image: postgres:15
+    container_name: odum-postgres
+    environment:
+      - POSTGRES_DB=execution_db
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - backtest-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d execution_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis for Live Execution (Optional)
+  redis-live:
+    profiles: ["live", "both"]
+    image: redis:7-alpine
+    container_name: odum-redis-live
+    ports:
+      - "6380:6379"
+    networks:
+      - backtest-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   redis-data:
+  postgres_data:
 
 networks:
   backtest-network:
