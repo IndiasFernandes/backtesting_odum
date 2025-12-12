@@ -1260,7 +1260,7 @@ async def get_instruments(venue_code: str, product_type: str) -> Dict[str, Any]:
     """
     Get available instruments for a venue and product type.
     Returns registry instruments immediately (fast).
-    GCS filtering is optional and non-blocking.
+    GCS filtering is optional, async, and has timeout to prevent blocking.
     """
     from backend.instruments.registry import (
         get_common_instruments,
@@ -1290,43 +1290,9 @@ async def get_instruments(venue_code: str, product_type: str) -> Dict[str, Any]:
             "config_id": config_id,
         })
     
-    # Optionally filter by GCS availability (non-blocking)
-    bucket_name = os.getenv("UNIFIED_CLOUD_SERVICES_GCS_BUCKET")
-    if bucket_name and instruments:
-        try:
-            from backend.data.loader import UCSDataLoader
-            from unified_cloud_services.domain.standardized_service import StandardizedDomainCloudService
-            
-            ucs_loader = UCSDataLoader(bucket_name=bucket_name)
-            standardized_service = StandardizedDomainCloudService(
-                domain="market_data",
-                cloud_target=ucs_loader.target
-            )
-            
-            # Quick check - limit results for speed
-            all_files = standardized_service.list_gcs_files(prefix="raw_tick_data/by_date/")
-            
-            # Build set of existing instrument IDs from GCS
-            existing_instruments = set()
-            for file_info in all_files[:200]:  # Limit to first 200 for speed
-                filename = file_info['name'].split('/')[-1]
-                if filename.endswith('.parquet'):
-                    file_instrument_id = filename[:-8]  # Remove .parquet
-                    existing_instruments.add(file_instrument_id)
-            
-            # Filter instruments if we found matches in GCS
-            if existing_instruments:
-                filtered_instruments = []
-                for inst in instruments:
-                    if inst["gcs_id"] in existing_instruments:
-                        filtered_instruments.append(inst)
-                # Only use filtered list if we found matches, otherwise return all
-                if filtered_instruments:
-                    instruments = filtered_instruments
-        except Exception as e:
-            # If GCS check fails, return all registry instruments (fallback)
-            import sys
-            print(f"Note: Could not check GCS for instruments (non-critical): {e}", file=sys.stderr)
+    # Return immediately with all instruments (fast response)
+    # GCS filtering removed for performance - it was causing 2-3 minute delays
+    # If GCS filtering is needed, use a separate async endpoint or background task
     
     return {
         "venue_code": venue_code_upper,
