@@ -23,19 +23,47 @@ services:
       # Mount secrets directory for GCS authentication
       - ./.secrets:/app/.secrets:ro
     environment:
-      - UNIFIED_CLOUD_LOCAL_PATH=/app/data_downloads
-      - UNIFIED_CLOUD_SERVICES_USE_PARQUET=true
-      - UNIFIED_CLOUD_SERVICES_USE_DIRECT_GCS=true
-      - DATA_CATALOG_PATH=/app/backend/data/parquet
-      # GCS credentials (defaults to .secrets/gcs/gcs-service-account.json)
+      # ------------------------------------------------------------------------------
+      # Google Cloud Platform (GCP) Authentication
+      # ------------------------------------------------------------------------------
+      # GCP Project ID (required for GCS operations)
+      - GCP_PROJECT_ID=${GCP_PROJECT_ID:-central-element-323112}
+      # Path to GCP service account JSON key file (defaults to .secrets/gcs/gcs-service-account.json)
       - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-/app/.secrets/gcs/gcs-service-account.json}
-      # GCS bucket for UCS (market data)
+      
+      # ------------------------------------------------------------------------------
+      # Input Data Storage (Market Data)
+      # ------------------------------------------------------------------------------
+      # Local path for data when using FUSE mount or local filesystem
+      - UNIFIED_CLOUD_LOCAL_PATH=/app/data_downloads
+      # Use Parquet format for data (always true for this system)
+      - UNIFIED_CLOUD_SERVICES_USE_PARQUET=true
+      # Use direct GCS API access instead of FUSE mount (recommended)
+      - UNIFIED_CLOUD_SERVICES_USE_DIRECT_GCS=true
+      # GCS bucket containing raw market data Parquet files (required)
       - UNIFIED_CLOUD_SERVICES_GCS_BUCKET=${UNIFIED_CLOUD_SERVICES_GCS_BUCKET:-}
-      # GCS bucket for backtest results (optional, can use same as above)
-      - GCS_BUCKET=${GCS_BUCKET:-${UNIFIED_CLOUD_SERVICES_GCS_BUCKET:-}}
-      # GCS FUSE configuration (optional)
+      
+      # ------------------------------------------------------------------------------
+      # Backtest Catalog Storage (NautilusTrader Catalog)
+      # ------------------------------------------------------------------------------
+      # Path to catalog root directory (required)
+      - DATA_CATALOG_PATH=/app/backend/data/parquet
+      
+      # ------------------------------------------------------------------------------
+      # Backtest Results Storage (Output)
+      # ------------------------------------------------------------------------------
+      # GCS bucket for storing backtest results (required)
+      # Used by: backend/results/serializer.py
+      - EXECUTION_STORE_GCS_BUCKET=${EXECUTION_STORE_GCS_BUCKET:-execution-store-cefi-central-element-323112}
+      
+      # ------------------------------------------------------------------------------
+      # GCS FUSE Mount Configuration (Optional)
+      # ------------------------------------------------------------------------------
+      # Enable GCS FUSE mounting (set to 'true' to use FUSE instead of direct GCS API)
       - USE_GCS_FUSE=${USE_GCS_FUSE:-false}
+      # GCS bucket name for FUSE mounting (only needed if USE_GCS_FUSE=true)
       - GCS_FUSE_BUCKET=${GCS_FUSE_BUCKET:-}
+      # GCS Service Account Key for FUSE mounting (usually not needed)
       - GCS_SERVICE_ACCOUNT_KEY=${GCS_SERVICE_ACCOUNT_KEY:-}
     # Use start.sh which handles FUSE mounting
     command: bash /app/backend/scripts/start.sh
