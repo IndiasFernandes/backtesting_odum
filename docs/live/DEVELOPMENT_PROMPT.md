@@ -1,17 +1,42 @@
 # Live Execution Development Prompt
 
-**Start Here**: Read `docs/live/ROADMAP.md` for complete 14-week implementation plan.
+> **Use this prompt to start development. Always reference the SSOT documents for specific details.**
 
-**Implementation**: Follow `docs/live/IMPLEMENTATION_GUIDE.md` for step-by-step instructions.
+## Start Here
 
-**File Structure**: See `docs/live/FILE_ORGANIZATION.md` for directory organization (`backend/live/` vs `backend/backtest/`).
+1. **Read the SSOT Documents**:
+   - `docs/live/ARCHITECTURE.md` - Complete architecture design and component specifications
+   - `docs/live/ROADMAP.md` - Complete implementation roadmap (all phases, decisions, guidelines)
+   - `docs/live/FILE_ORGANIZATION.md` - File structure and organization strategy
+   - `docs/live/README.md` - Documentation overview
 
-**Quick Start**: 
-1. Create `feature/live-execution` branch from `main` (see Git Workflow in ROADMAP.md)
-2. Follow Phase 1: Core Infrastructure & Docker Setup (Weeks 1-2)
-3. Add Docker profiles to existing `docker-compose.yml` (backward compatible)
-4. Create `backend/live/` directory structure
-5. Set up PostgreSQL schema for OMS/positions
+2. **Use Context7**:
+   - Always use Context7 to get latest NautilusTrader documentation
+   - Use Context7 for any external library documentation needed
+   - Verify implementation patterns against Context7 best practices
 
-**Key Requirements**: Use TradingNode for Binance/Bybit/OKX, external adapters for Deribit/IB. Implement Execution Orchestrator, Unified OMS, Position Tracker, Risk Engine, Smart Router. Use UCS for all GCS operations (PRIMARY interface). Follow 7-phase roadmap in ROADMAP.md.
+3. **Follow the Documents**:
+   - Documents are SSOT (Single Source of Truth)
+   - Update documents as you implement (keep them coherent)
+   - When in doubt, check the documents first
 
+## Development Workflow
+
+1. **Check Current Phase**: See `ROADMAP.md` for current implementation phase
+2. **Review Requirements**: Check `ROADMAP.md` for phase-specific requirements
+3. **Follow File Structure**: Use `FILE_ORGANIZATION.md` for directory organization
+4. **Implement**: Follow patterns from existing backtest system where applicable
+5. **Update Documents**: Keep documents updated as implementation progresses
+6. **Verify**: Ensure alignment with SSOT documents
+
+## Key Principles
+
+- **Documents are SSOT**: Always refer to documents for specific details
+- **Keep Documents Updated**: Update documents as you implement
+- **Use Context7**: Always use Context7 for external documentation
+- **Consistency**: Maintain consistency with backtest system where applicable
+- **Modularity**: Follow existing modular design patterns
+
+---
+
+**Remember**: This prompt is a guide. All specific details, requirements, and decisions are in the SSOT documents (`ROADMAP.md`, `FILE_ORGANIZATION.md`).

@@ -12,8 +12,7 @@ Even though live and backtest run as **separate services**, the codebase maintai
 - ✅ No confusion about which code runs where
 
 **Related Documents**:
-- `ROADMAP.md` - Complete implementation roadmap
-- `IMPLEMENTATION_GUIDE.md` - Detailed implementation instructions
+- `ROADMAP.md` - Complete implementation roadmap (all details)
 - `DEVELOPMENT_PROMPT.md` - Quick reference prompt
 
 ---
@@ -46,11 +45,12 @@ backend/
 │   ├── positions.py        # NEW: Position Tracker
 │   ├── risk.py             # NEW: Risk Engine
 │   ├── router.py           # NEW: Smart Router (live-specific)
-│   └── adapters/           # NEW: External SDK adapters
+│   └── adapters/           # NEW: External SDK adapters (CeFi, TradFi, DeFi, Sports)
 │       ├── __init__.py
-│       ├── base.py
-│       ├── deribit.py
-│       └── registry.py
+│       ├── base.py         # Base adapter interface (supports all venue types)
+│       ├── deribit.py      # Deribit adapter (CeFi) - after core system
+│       ├── interactive_brokers.py  # IB adapter (TradFi) - future
+│       └── registry.py     # Adapter registry
 │
 ├── execution/               # CURRENT: Shared execution components
 │   ├── __init__.py
@@ -170,7 +170,7 @@ backend/
 | UnifiedPositionTracker | `backend/live/positions.py` | Position aggregation | ❌ No |
 | PreTradeRiskEngine | `backend/live/risk.py` | Pre-trade risk checks | ❌ No |
 | Smart Router (Live) | `backend/live/router.py` | Live-specific routing | ❌ No |
-| External Adapters | `backend/live/adapters/` | Deribit, IB adapters | ❌ No |
+| External Adapters | `backend/live/adapters/` | Deribit (CeFi), IB (TradFi), future DeFi/Sports | ❌ No |
 | Live API | `backend/api/live_server.py` | FastAPI endpoints (port 8001) | ❌ No |
 
 ### Shared Components

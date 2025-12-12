@@ -2,44 +2,50 @@
 
 > **Source of Truth (SSOT)** for live execution system - 4 core documents
 
-## Core Documents (4 Files)
+## Core Documents (SSOT - Single Source of Truth)
 
-1. **ROADMAP.md** ⭐ - Complete implementation roadmap
-   - 6-phase implementation plan (12 weeks)
-   - Detailed tasks and deliverables per phase
+**Important**: These documents are SSOT. Always reference them for specific details. Update them as implementation progresses to keep them coherent. Always use Context7 for external documentation.
+
+1. **ARCHITECTURE.md** ⭐ - Complete architecture design
+   - High-level architecture and component design
+   - Component specifications and interfaces
+   - Data flow and integration patterns
+   - Deployment architecture (local development)
+   - Monitoring and observability
+   - **SSOT for**: Architecture design, component specifications, system design
+
+2. **ROADMAP.md** ⭐ - Complete implementation roadmap
+   - Implementation phases, tasks, deliverables
+   - Architecture decisions and guidelines
    - Success criteria and timelines
-   - Critical implementation guidelines
-   - Deployment architecture summary
-   - Current backend structure reference
-   - **START HERE**: Complete roadmap for implementation
+   - **SSOT for**: Implementation plan, architecture decisions, requirements
 
-2. **IMPLEMENTATION_GUIDE.md** - Detailed implementation instructions
-   - Context and requirements
-   - NautilusTrader documentation alignment
-   - Current implementation reference (aligned with actual backend structure)
-   - 6-phase implementation checklist
-   - Critical implementation guidelines
-   - Success criteria
-   - **USE WITH**: ROADMAP.md for step-by-step implementation
+3. **FILE_ORGANIZATION.md** ⭐ - File organization strategy
+   - Current and target file structure
+   - Directory organization and boundaries
+   - Migration strategy
+   - **SSOT for**: File structure, code organization, import patterns
 
-3. **FILE_ORGANIZATION.md** - File organization strategy ⭐
-   - Current backend structure (December 2025)
-   - Target structure for live execution
-   - Clear separation of live vs backtest code
-   - Import patterns and boundaries
-   - 6-phase migration strategy
-   - **Key**: Documents actual current structure (`backend/core/engine.py` for BacktestEngine)
+4. **DEVELOPMENT_PROMPT.md** - Development workflow guide
+   - How to use SSOT documents
+   - Development workflow
+   - Context7 usage guidelines
+   - **SSOT for**: Development approach and workflow
 
-4. **DEVELOPMENT_PROMPT.md** - Concise development prompt (500 chars)
-   - Quick reference for development
-   - Use with other documents for context
+5. **AGENT_DEVELOPMENT_PROMPT.md** - AI agent development guide
+   - Agent-specific development workflow
+   - Document update guidelines
+   - Context7 usage for agents
+   - **SSOT for**: AI agent development approach
 
 ## Quick Start
 
-1. **Start Here**: Read `ROADMAP.md` for complete implementation roadmap
-2. **Details**: Read `IMPLEMENTATION_GUIDE.md` for step-by-step instructions
-3. **Structure**: Read `FILE_ORGANIZATION.md` for file organization
-4. **Quick Ref**: Use `DEVELOPMENT_PROMPT.md` for quick reference
+1. **Read SSOT Documents**: Start with `ARCHITECTURE.md` for system design, then `ROADMAP.md` for implementation plan, and `FILE_ORGANIZATION.md` for file structure
+2. **Follow Development Prompt**: Use `DEVELOPMENT_PROMPT.md` for workflow
+3. **Use Context7**: Always use Context7 for external documentation (NautilusTrader, etc.)
+4. **Update Documents**: Keep documents updated as you implement, keep them coherent
+
+**Key Principle**: Documents are SSOT. Always check documents first, update them as you go, keep them coherent. Always use Context7 for external documentation.
 
 ## Status
 

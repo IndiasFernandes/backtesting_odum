@@ -4,13 +4,13 @@
 
 ## Quick Start
 
-**Start Here**: This document (`ROADMAP.md`) - Complete implementation roadmap
-
-**For Details**: Read `IMPLEMENTATION_GUIDE.md` for step-by-step implementation instructions
+**Start Here**: This document (`ROADMAP.md`) - Complete implementation roadmap with all details
 
 **File Organization**: See `FILE_ORGANIZATION.md` for directory structure and code organization
 
 **Quick Reference**: Use `DEVELOPMENT_PROMPT.md` for concise development prompt
+
+**Note**: All implementation details are consolidated in this ROADMAP.md document
 
 ---
 
@@ -45,12 +45,6 @@
   - [ ] PostgreSQL service - **New for live OMS/positions**
   - [ ] Redis service (optional) - **New for live config updates**
   - [ ] Frontend service (port 5173) - **Update with service detection**
-- [ ] **Frontend Service Detection**:
-  - [ ] Create `useServiceDetection` React hook
-  - [ ] Implement health check endpoints (`/api/health` for backtest, `/api/live/health` for live)
-  - [ ] Frontend detects which services are active
-  - [ ] Conditionally show/hide pages based on active services
-  - [ ] Status page shows service health and GCS connectivity
 
 **Deliverables**:
 - ✅ Git workflow established (`feature/live-execution` branch)
@@ -79,7 +73,7 @@
 
 ### Phase 2: TradingNode Integration (Weeks 3-4)
 
-**Goal**: Integrate NautilusTrader TradingNode for Binance, Bybit, OKX
+**Goal**: Integrate NautilusTrader TradingNode for Binance, Bybit, OKX (CeFi)
 
 **Tasks**:
 - [ ] Create `LiveTradingNode` wrapper class (`backend/live/trading_node.py`)
@@ -88,43 +82,54 @@
 - [ ] Subscribe to order events (`OrderSubmitted`, `OrderFilled`, `OrderCancelled`)
 - [ ] Implement position sync from NautilusTrader Portfolio
 - [ ] Test with paper trading accounts
+- [ ] **Prepare for TradFi**: Design adapter interface to support future TradFi venues (IB, etc.)
 
 **Deliverables**:
 - ✅ `LiveTradingNode` wrapper class
 - ✅ TradingNode configuration from JSON
 - ✅ Event subscriptions working
 - ✅ Position sync from NautilusTrader
+- ✅ Adapter interface designed for TradFi/DeFi/Sports
 
 **Success Criteria**:
 - TradingNode connects to Binance/Bybit/OKX
 - Order events received and logged
 - Positions synced from NautilusTrader Portfolio
 - Paper trading test successful
+- Adapter interface ready for TradFi integration
 
 ---
 
 ### Phase 3: External Adapter Framework (Weeks 5-6)
 
-**Goal**: Build framework for venues not in NautilusTrader (Deribit, IB)
+**Goal**: Build framework for venues not in NautilusTrader (Deribit, TradFi, future DeFi/Sports)
 
 **Tasks**:
 - [ ] Create `ExternalAdapter` abstract base class (`backend/live/adapters/base.py`)
-- [ ] Implement `DeribitAdapter` (reference implementation) (`backend/live/adapters/deribit.py`)
+  - [ ] Design interface to support CeFi (Deribit), TradFi (IB), DeFi (future), Sports (future)
+  - [ ] Unified interface for all external venues
+- [ ] **Priority**: Complete core system first (OMS, Risk Engine, Router) before Deribit
 - [ ] Create adapter registry (`backend/live/adapters/registry.py`)
 - [ ] Implement adapter lifecycle (connect, disconnect, reconnect)
+- [ ] **After core system complete**: Implement `DeribitAdapter` (reference implementation)
 - [ ] Test Deribit adapter with demo account
+- [ ] **Future**: TradFi adapter (Interactive Brokers) - after Deribit
+- [ ] **Future**: DeFi and Sports adapters - after TradFi
 
 **Deliverables**:
-- ✅ `ExternalAdapter` base class
-- ✅ `DeribitAdapter` implementation
+- ✅ `ExternalAdapter` base class (supports all venue types)
 - ✅ Adapter registry
 - ✅ Adapter lifecycle management
+- ✅ `DeribitAdapter` implementation (after core system)
+- ⏳ TradFi adapter (future)
+- ⏳ DeFi/Sports adapters (future)
 
 **Success Criteria**:
-- External adapter interface defined
-- Deribit adapter connects and authenticates
-- Can submit orders via Deribit adapter
+- External adapter interface defined (supports CeFi, TradFi, DeFi, Sports)
 - Adapter registry manages multiple adapters
+- Deribit adapter connects and authenticates (after core system)
+- Can submit orders via Deribit adapter
+- Framework ready for TradFi/DeFi/Sports integration
 
 ---
 
@@ -213,42 +218,57 @@
   - [ ] Test resource isolation (backtest CPU spikes don't affect live latency)
   - [ ] Verify existing volumes and environment variables still work
   - [ ] Test migration from current setup to new profiles (zero downtime)
-- [ ] **Production deployment setup**:
+- [ ] **Local deployment setup**:
   - [ ] Environment variable configuration
   - [ ] Health check configurations
-  - [ ] Monitoring and logging setup
-  - [ ] Documentation for deployment procedures
+  - [ ] Local monitoring and logging setup
+  - [ ] Documentation for local testing procedures
 
 **Deliverables**:
 - ✅ Target file structure implemented
 - ✅ All imports updated
 - ✅ Docker Compose fully tested
-- ✅ Deployment documentation
-- ✅ Production deployment ready
+- ✅ Local deployment documentation
+- ✅ Local testing ready
 
 **Success Criteria**:
 - Target structure matches `FILE_ORGANIZATION.md`
 - All Docker profiles work correctly
 - Services can be deployed independently
-- Production deployment procedures documented
+- Local deployment procedures documented
 
 ### Phase 7: Frontend Integration & Testing (Weeks 13-14)
 
 **Goal**: Frontend integration for live execution testing and comprehensive validation
 
 **Tasks**:
-- [ ] **Frontend Live Execution UI**:
+- [ ] **Frontend Service Detection**:
+  - [ ] Create `useServiceDetection` React hook
+  - [ ] Implement health check endpoints (`/api/health` for backtest, `/api/live/health` for live)
+  - [ ] Frontend detects which services are active (backtest only, live only, or both)
+  - [ ] Conditionally show/hide pages based on active services
+  - [ ] Status page shows service health and GCS connectivity
+- [ ] **Live Execution UI - Trade Testing**:
   - [ ] Create live execution page (`/live/execute`)
-  - [ ] Trade submission form (instrument, side, quantity, order type, price)
-  - [ ] Real-time order status display (matches CLI output)
-  - [ ] Position monitoring dashboard
-  - [ ] Order history and fills display
-  - [ ] Strategy deployment interface
-  - [ ] Live execution logs viewer (matches CLI output)
-- [ ] **Frontend Service Detection** (if not completed in Phase 1):
-  - [ ] Implement `useServiceDetection` hook
-  - [ ] Conditional route rendering (show/hide pages based on active services)
-  - [ ] Status page with service health indicators
+  - [ ] Trade submission form with all options:
+    - Instrument selection (canonical ID)
+    - Side (BUY/SELL)
+    - Quantity
+    - Order type (MARKET/LIMIT)
+    - Price (if LIMIT)
+    - Execution algorithm (TWAP, VWAP, Iceberg, NORMAL)
+    - Algorithm parameters (horizon_secs, interval_secs, etc.)
+  - [ ] **CLI Output Display**: Shows exactly what's being sent (matches CLI output format)
+  - [ ] Real-time order status display (matches CLI output format)
+  - [ ] Position monitoring dashboard (matches CLI format)
+  - [ ] Order history and fills display (matches CLI format)
+- [ ] **Strategy Deployment Interface**:
+  - [ ] Strategy upload page (`/live/strategies`)
+  - [ ] Upload strategy configuration (JSON)
+  - [ ] Deploy strategy to live execution
+  - [ ] Monitor strategy performance
+  - [ ] Start/stop strategy execution
+  - [ ] View strategy logs (matches CLI output format)
 - [ ] **CLI Alignment**:
   - [ ] Ensure frontend displays match CLI output exactly
   - [ ] Same order status format, position format, fill format
@@ -263,11 +283,11 @@
   - [ ] Documentation completion
 
 **Deliverables**:
+- ✅ Service detection hook working
 - ✅ Live execution UI page
-- ✅ Trade submission interface
-- ✅ Real-time order/position monitoring
+- ✅ Trade submission interface with CLI output display
+- ✅ Real-time order/position monitoring (CLI-aligned)
 - ✅ Strategy deployment interface
-- ✅ Service detection working
 - ✅ Unit test suite
 - ✅ Integration test suite
 - ✅ Paper trading validation report
@@ -279,6 +299,7 @@
 - Can submit trades via frontend UI
 - Frontend displays match CLI output exactly
 - Service detection works (shows/hides pages correctly)
+- Strategy deployment works
 - All unit tests pass
 - Integration tests pass
 - Paper trading successful
@@ -435,6 +456,8 @@ Because development happens in feature branches, **main is always recoverable**.
 
 ## Deployment Architecture
 
+**See**: `ARCHITECTURE.md` Section 7 for detailed deployment architecture and component structure.
+
 **Recommended**: Separate Services (Docker Compose Profiles) ⭐
 
 **Why This Is Best**:
@@ -444,12 +467,14 @@ Because development happens in feature branches, **main is always recoverable**.
 - ✅ Production-ready without over-engineering
 - ✅ Cost-effective for current scale
 
-**Services**:
+**Services** (Local Development):
 - `odum-backend` (port 8000) - Backtest service
 - `odum-live-backend` (port 8001) - Live service
 - `odum-frontend` (port 5173) - Frontend with service detection
-- PostgreSQL - Shared database for live OMS/positions
+- PostgreSQL (Docker) - Local database for live OMS/positions only
 - Redis - Optional (for live config updates)
+
+**Note**: Production deployment is handled by deployment team, not included in this documentation.
 
 **Deployment**:
 ```bash
@@ -541,7 +566,7 @@ services:
       timeout: 10s
       retries: 3
   
-  # PostgreSQL Database - NEW SERVICE
+  # PostgreSQL Database - NEW SERVICE (Local Development Only)
   postgres:
     profiles: ["live", "both"]
     image: postgres:15
@@ -556,6 +581,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - backtest-network
+    # Note: Production database setup handled by deployment team
   
   # Redis (Optional) - NEW SERVICE
   redis-live:
@@ -645,17 +671,122 @@ docker-compose --profile <profile> logs -f live-backend
 9. ✅ Smart Router selects optimal venue
 10. ✅ Frontend detects services and shows/hides pages dynamically
 11. ✅ Status page shows service health and GCS connectivity
-12. ✅ Zero-downtime migration from current system
+12. ✅ Trade testing UI works (submit trades, see CLI output)
+13. ✅ Strategy deployment interface works
+14. ✅ Frontend displays match CLI output exactly
+15. ✅ Zero-downtime migration from current system
 
 ---
 
-## Key Decisions
+## Architecture Decisions (Resolved)
 
-### Architecture Decisions ✅
-- **Deployment**: Separate Services (Docker Compose Profiles) - See `DEPLOYMENT_ANALYSIS.md`
-- **File Organization**: Clear separation (`backend/live/` vs `backend/backtest/`) - See `FILE_ORGANIZATION.md`
-- **Data Interface**: UCS as PRIMARY interface (not `data_downloads/`)
-- **NautilusTrader**: Use `TradingNode` for live (not `BacktestNode`)
+### 1. API Protocol ✅
+
+**Decision**: **gRPC** (fastest option)
+
+**Rationale**:
+- Lowest latency for order submission
+- Binary protocol (faster than JSON)
+- Streaming support for real-time updates
+- Aligns with workflow requirement for fast execution
+- Protobuf messages match spec requirements
+
+**Implementation**:
+- Strategy service → Live Execution: gRPC with protobuf Order messages
+- Frontend → Live API: REST API (for UI compatibility)
+- Internal components: gRPC for high-performance paths
+
+### 2. Database ✅
+
+**Decision**: **PostgreSQL** (local development, minimal schema, only live execution data)
+
+**Local Development**:
+- PostgreSQL server in Docker (for local development)
+- Minimal schema: only orders and positions
+- **NOT persisted**: Market data, signals, backtest results (handled by GCS via UCS)
+
+**Schema** (Local Development):
+```sql
+-- Minimal schema for live execution
+CREATE TABLE unified_orders (
+    order_id VARCHAR PRIMARY KEY,
+    operation_id VARCHAR,
+    instrument_key VARCHAR,
+    side VARCHAR,
+    quantity DECIMAL,
+    status VARCHAR,
+    created_at TIMESTAMP,
+    updated_at TIMESTAMP,
+    venue VARCHAR,
+    fills JSONB  -- Store fill details as JSONB
+);
+
+CREATE TABLE unified_positions (
+    id SERIAL PRIMARY KEY,
+    instrument_key VARCHAR,
+    quantity DECIMAL,
+    timestamp TIMESTAMP,
+    venue VARCHAR
+);
+
+-- Indexes for fast queries
+CREATE INDEX idx_orders_status ON unified_orders(status);
+CREATE INDEX idx_orders_instrument ON unified_orders(instrument_key);
+CREATE INDEX idx_positions_instrument ON unified_positions(instrument_key);
+```
+
+**Why Minimal**:
+- Only persist what's needed for live execution (orders, positions)
+- Market data, signals, results → GCS via UCS (not database)
+- Reduces database load and complexity
+
+**Note**: Production deployment (including database setup) is handled by deployment team, not included in this documentation.
+
+### 3. Monitoring ✅
+
+**Decision**: **Prometheus + Grafana** (for local development and testing)
+
+**Rationale**:
+- **Prometheus**: Industry standard, best for metrics collection
+- **Grafana**: Best visualization, practical dashboards
+- **Combined**: Fast, practical, best approach for monitoring
+
+**Local Implementation**:
+- Metrics: Prometheus exporters for order latency, fill rates, position tracking
+- Dashboards: Grafana for visualization
+- Logging: Structured logs (local files or stdout)
+
+**Note**: Production monitoring setup (including Google Cloud Operations) is handled by deployment team, not included in this documentation.
+
+### 4. External Venues Priority ✅
+
+**Priority Order**:
+1. **Core System First** (Weeks 1-10):
+   - Complete OMS, Risk Engine, Router, Orchestrator
+   - Ensure system works end-to-end
+2. **Deribit (CeFi)** (Weeks 11-12):
+   - After core system is complete
+   - Reference implementation for external adapters
+3. **TradFi (Interactive Brokers)** (Future):
+   - After Deribit is stable
+   - Uses same adapter framework
+4. **DeFi & Sports** (Future):
+   - After TradFi integration
+   - Extends adapter framework
+
+**Rationale**: System must be complete and stable before adding venues. Deribit serves as reference implementation.
+
+### 5. Deployment Environment ✅
+
+**Local Development**:
+- Docker Compose for local services
+- PostgreSQL server in Docker
+- Services run locally (backend, live-backend, frontend)
+
+**Production Deployment**:
+- **Note**: Production deployment (GCP, Cloud SQL, etc.) is handled by deployment team
+- This documentation focuses on local development and implementation
+- Deployment team will handle: GCP setup, Cloud SQL, production monitoring, etc.
 
 ### Component Decisions ✅
 - **Main Engine**: `LiveExecutionOrchestrator` (not `LiveEngine`)
@@ -663,6 +794,9 @@ docker-compose --profile <profile> logs -f live-backend
 - **OMS**: `UnifiedOrderManager`
 - **Position Tracker**: `UnifiedPositionTracker`
 - **Risk Engine**: `PreTradeRiskEngine`
+- **File Organization**: Clear separation (`backend/live/` vs `backend/backtest/`) - See `FILE_ORGANIZATION.md`
+- **Data Interface**: UCS as PRIMARY interface (not `data_downloads/`)
+- **NautilusTrader**: Use `TradingNode` for live (not `BacktestNode`)
 
 ---
 
@@ -684,9 +818,14 @@ docker-compose --profile <profile> logs -f live-backend
 
 ## Documentation References
 
-- **Implementation Guide**: `IMPLEMENTATION_GUIDE.md` - Detailed step-by-step instructions
+- **Architecture**: `ARCHITECTURE.md` - Complete architecture design and component specifications
 - **File Organization**: `FILE_ORGANIZATION.md` - Directory structure and code organization
 - **Development Prompt**: `DEVELOPMENT_PROMPT.md` - Quick reference prompt
+
+**Note**: 
+- `ARCHITECTURE.md` contains detailed component specifications and system design
+- `ROADMAP.md` contains implementation phases, decisions, and requirements
+- Both documents are SSOT and should be kept aligned and coherent
 
 ---
 
@@ -791,14 +930,12 @@ backend/
 - Same log format
 - Real-time updates via WebSocket or polling
 
-**See**: `FRONTEND_SERVICE_DETECTION.md` for detailed implementation guide
-
 ---
 
 ## Next Steps
 
 1. **Set Up Git Workflow**: Create `feature/live-execution` branch
-2. **Review**: Read `IMPLEMENTATION_GUIDE.md` for complete context
+2. **Review**: Read this ROADMAP.md for complete context
 3. **Set Up**: Create `backend/live/` directory structure
 4. **Begin Phase 1**: Start with core infrastructure and Docker setup
 5. **Follow Phases**: Implement incrementally, test as you go

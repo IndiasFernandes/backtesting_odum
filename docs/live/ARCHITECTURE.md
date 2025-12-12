@@ -2,7 +2,11 @@
 
 ## Executive Summary
 
-This document outlines the architecture and implementation plan for a production-grade live execution mechanism that mirrors the backtest system's design while supporting both NautilusTrader-integrated venues (CeFi: Binance, Bybit, OKX) and external SDK adapters (TradFi: Interactive Brokers, future DeFi/Sports venues). The system will be deployed separately from backtesting but share core execution mechanisms for consistency.
+This document outlines the architecture and implementation plan for a production-grade live execution mechanism that mirrors the backtest system's design while supporting both NautilusTrader-integrated venues (CeFi: Binance, Bybit, OKX) and external SDK adapters (CeFi: Deribit, TradFi: Interactive Brokers, future DeFi/Sports venues). The system will be deployed separately from backtesting but share core execution mechanisms for consistency.
+
+**SSOT Document**: This document is part of the SSOT (Single Source of Truth) documentation. Always refer to `docs/live/ROADMAP.md` for implementation phases and decisions, `docs/live/FILE_ORGANIZATION.md` for file structure, and update all SSOT documents as implementation progresses to keep them coherent.
+
+**Context7**: Always use Context7 for NautilusTrader documentation and external library references.
 
 ---
 
@@ -40,7 +44,7 @@ Strategy → Execution Orchestrator → Risk Engine → Unified OMS → Smart Ro
 - **Unified OMS**: Tracks orders across all venues (NautilusTrader + External)
 - **Unified Position Tracker**: Aggregates positions across venues
 - **Smart Router**: Routes to optimal venue (NautilusTrader or External SDK)
-- **Order Adapter**: Converts protobuf ↔ NautilusTrader orders
+- **Order Adapter**: Converts JSON Order messages ↔ NautilusTrader orders
 - **Instrument Converter**: Canonical ID parsing and conversion
 
 **Key Features:**
@@ -102,7 +106,7 @@ Strategy → Execution Orchestrator → Risk Engine → Unified OMS → Smart Ro
            ▼                           ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                    Strategy Service (External)                  │
-│              (Sends protobuf Order messages)                    │
+│              (Sends JSON Order messages via REST API)          │
 └────────────────────────────┬────────────────────────────────────┘
                              │
                              ▼
@@ -205,7 +209,7 @@ Strategy → Execution Orchestrator → Risk Engine → Unified OMS → Smart Ro
 **Purpose**: Main entry point for live order execution, coordinates all components.
 
 **Responsibilities:**
-- Receive protobuf Order messages from strategy service
+- Receive JSON Order messages from strategy service (via REST API)
 - Coordinate risk checks, OMS, routing, and execution
 - Handle error recovery and graceful degradation
 - Provide unified order submission interface
@@ -214,7 +218,7 @@ Strategy → Execution Orchestrator → Risk Engine → Unified OMS → Smart Ro
 **Key Methods:**
 ```python
 class LiveExecutionOrchestrator:
-    async def submit_order(proto_order: order_pb2.Order) -> ExecutionResult
+    async def submit_order(order_data: dict) -> ExecutionResult  # JSON dict from REST API
     async def cancel_order(operation_id: str) -> CancellationResult
     async def get_order_status(operation_id: str) -> OrderStatus
     async def initialize() -> None
@@ -233,12 +237,18 @@ class LiveExecutionOrchestrator:
 
 **Purpose**: Integrate NautilusTrader `TradingNode` for CeFi venues (Binance, Bybit, OKX).
 
+**NautilusTrader Multi-Venue Support**:
+- ✅ **Native multi-venue support**: NautilusTrader TradingNode can connect to multiple venues simultaneously
+- ✅ **Multiple account types**: Can configure multiple account types from same venue (e.g., BINANCE_SPOT + BINANCE_FUTURES)
+- ✅ **Portfolio aggregation**: NautilusTrader Portfolio component automatically aggregates positions across all configured venues
+- ✅ **Unified event loop**: Single event loop handles all venues, orders, and positions
+
 **Components:**
-- **LiveDataEngine**: Market data subscriptions
-- **LiveExecutionEngine**: Order execution and lifecycle management
-- **Portfolio**: Position and account tracking
-- **Cache**: Instrument and market data cache
-- **Execution Clients**: BinanceSpot, BinanceFutures, Bybit, OKX
+- **LiveDataEngine**: Market data subscriptions (supports multiple venues)
+- **LiveExecutionEngine**: Order execution and lifecycle management (supports multiple venues)
+- **Portfolio**: Position and account tracking (aggregates across all venues)
+- **Cache**: Instrument and market data cache (unified across venues)
+- **Execution Clients**: BinanceSpot, BinanceFutures, Bybit, OKX (all can run simultaneously)
 
 **Configuration:**
 ```python
@@ -265,10 +275,16 @@ class LiveExecutionOrchestrator:
 ```
 
 **Integration Points:**
-- Subscribe to order events (OrderSubmitted, OrderFilled, OrderCancelled)
-- Subscribe to position updates
-- Submit orders via `TradingNode.submit_order()`
-- Query positions via `Portfolio.positions()`
+- Subscribe to order events (OrderSubmitted, OrderFilled, OrderCancelled) - works across all venues
+- Subscribe to position updates - Portfolio aggregates positions from all venues
+- Submit orders via `TradingNode.submit_order()` - specify venue in order
+- Query positions via `Portfolio.positions()` - returns aggregated positions across all venues
+
+**Note**: Our `UnifiedPositionTracker` builds on top of NautilusTrader's Portfolio, adding:
+- External adapter position aggregation (Deribit, IB, etc.)
+- PostgreSQL persistence
+- Canonical instrument ID mapping
+- Cross-venue exposure calculations
 
 #### 2.3.3 External SDK Adapter Framework
 
@@ -404,11 +420,19 @@ CREATE TABLE unified_orders (
 
 **Purpose**: Aggregate positions across all venues into a single view.
 
+**Relationship to NautilusTrader Portfolio**:
+- NautilusTrader Portfolio already aggregates positions across all NautilusTrader venues (Binance, Bybit, OKX)
+- Our Unified Position Tracker extends this by:
+  - Adding external adapter positions (Deribit, IB, etc.)
+  - Providing canonical instrument ID mapping
+  - Adding PostgreSQL persistence
+  - Enabling cross-venue exposure calculations
+
 **Key Features:**
-- Aggregate positions from NautilusTrader Portfolio
-- Aggregate positions from external adapters
+- Aggregate positions from NautilusTrader Portfolio (which already aggregates Binance/Bybit/OKX)
+- Aggregate positions from external adapters (Deribit, IB, etc.)
 - Unified queries by canonical ID, strategy, venue, base asset
-- Aggregated exposure calculations (total notional value)
+- Aggregated exposure calculations (total notional value across all venues)
 - Position deltas from fill events
 - PostgreSQL persistence
 
@@ -791,7 +815,7 @@ def route_order(order: UnifiedOrder) -> VenueRoute:
 
 ### 5.1 Strategy Service Integration
 
-**Protocol**: Protobuf Order messages over gRPC or REST API.
+**Protocol**: Protobuf Order messages over **gRPC** (fastest option for strategy service → live execution). Frontend → Live API uses REST API for UI compatibility.
 
 **Message Format:**
 ```protobuf
@@ -912,12 +936,14 @@ message ExecutionResult {
 
 ## 7. Deployment Architecture
 
-### 7.1 Service Separation Strategy
+**Note**: This section covers **local development** deployment only. Production deployment (GCP, Cloud SQL, etc.) is handled by deployment team, not included in this documentation.
+
+### 7.1 Service Separation Strategy (Local Development)
 
 The system supports three deployment modes using Docker Compose profiles:
 
 1. **Backtest Only**: Run backtesting infrastructure (`odum-backend` on port 8000)
-2. **Live Execution Only**: Run live trading infrastructure (`odum-live-backend` on port 8001, PostgreSQL, Redis)
+2. **Live Execution Only**: Run live trading infrastructure (`odum-live-backend` on port 8001, PostgreSQL in Docker for local development, Redis)
 3. **Both**: Run both systems simultaneously
 
 **Docker Compose Profiles:**
@@ -1087,7 +1113,7 @@ IB_HOST=127.0.0.1
 IB_PORT=7497
 
 # Database
-DATABASE_URL=postgresql://user:pass@host:5432/live_execution
+DATABASE_URL=postgresql://user:pass@postgres:5432/execution_db  # Local PostgreSQL in Docker
 
 # Configuration
 LIVE_TRADING_CONFIG_PATH=/app/config/live_trading_config.json
@@ -1121,7 +1147,11 @@ LIVE_TRADING_CONFIG_PATH=/app/config/live_trading_config.json
 
 ## 8. Monitoring & Observability
 
-### 8.1 Metrics
+**Decision**: **Prometheus + Grafana** (for local development and testing)
+
+**Note**: Production monitoring setup is handled by deployment team, not included in this documentation.
+
+### 8.1 Metrics (Local Development)
 
 - Order submission rate
 - Order fill rate
@@ -1130,6 +1160,8 @@ LIVE_TRADING_CONFIG_PATH=/app/config/live_trading_config.json
 - Risk rejections
 - Position exposure
 - Error rates
+
+**Implementation**: Prometheus exporters for order latency, fill rates, position tracking
 
 ### 8.2 Logging
 
@@ -1140,13 +1172,15 @@ LIVE_TRADING_CONFIG_PATH=/app/config/live_trading_config.json
 - State synchronization events
 - Errors and warnings
 
-### 8.3 Alerts
+**Implementation**: Structured logs (local files or stdout)
 
-- High rejection rate
-- Venue connectivity issues
-- Position limit breaches
-- Unusual latency
-- State synchronization failures
+### 8.3 Dashboards (Local Development)
+
+- Grafana dashboards for visualization
+- Real-time metrics display
+- Historical performance tracking
+
+**Note**: Production dashboards and alerting handled by deployment team.
 
 ---
 
@@ -1188,7 +1222,10 @@ LIVE_TRADING_CONFIG_PATH=/app/config/live_trading_config.json
 3. ✅ Service-specific entry points (`backend/api/server.py` vs `backend/api/live_server.py`)
 4. ✅ Shared components clearly identified and documented
 
-**See**: `docs/live/FILE_ORGANIZATION.md` for complete file organization strategy, import patterns, and migration guide.
+**See**: 
+- `docs/live/FILE_ORGANIZATION.md` - Complete file organization strategy, import patterns, and migration guide
+- `docs/live/ROADMAP.md` - Implementation phases, architecture decisions, and requirements
+- `docs/live/README.md` - Documentation overview and quick start
 
 ---
 
