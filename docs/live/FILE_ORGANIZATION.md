@@ -39,7 +39,7 @@ backend/
 │
 ├── live/                    # TARGET: Live-specific components (to be created)
 │   ├── __init__.py         # NEW
-│   ├── engine.py           # NEW: LiveEngine / LiveExecutionOrchestrator
+│   ├── engine.py           # NEW: LiveExecutionOrchestrator (main orchestrator)
 │   ├── trading_node.py     # NEW: TradingNode wrapper
 │   ├── orchestrator.py     # NEW: Execution Orchestrator
 │   ├── oms.py              # NEW: Unified OMS
@@ -165,11 +165,10 @@ backend/
 | Component | Location | Purpose | Shared? |
 |-----------|----------|---------|---------|
 | LiveExecutionOrchestrator | `backend/live/orchestrator.py` | Main live orchestrator | ❌ No |
-| LiveEngine | `backend/live/engine.py` | Live engine wrapper | ❌ No |
-| TradingNode Wrapper | `backend/live/trading_node.py` | TradingNode integration | ❌ No |
-| Unified OMS | `backend/live/oms.py` | Order management | ❌ No |
-| Position Tracker | `backend/live/positions.py` | Position aggregation | ❌ No |
-| Risk Engine | `backend/live/risk.py` | Pre-trade risk checks | ❌ No |
+| LiveTradingNode | `backend/live/trading_node.py` | TradingNode integration | ❌ No |
+| UnifiedOrderManager | `backend/live/oms.py` | Order management | ❌ No |
+| UnifiedPositionTracker | `backend/live/positions.py` | Position aggregation | ❌ No |
+| PreTradeRiskEngine | `backend/live/risk.py` | Pre-trade risk checks | ❌ No |
 | Smart Router (Live) | `backend/live/router.py` | Live-specific routing | ❌ No |
 | External Adapters | `backend/live/adapters/` | Deribit, IB adapters | ❌ No |
 | Live API | `backend/api/live_server.py` | FastAPI endpoints (port 8001) | ❌ No |
@@ -281,8 +280,7 @@ backend/
 │
 ├── live/                   # NEW: Live-specific
 │   ├── __init__.py
-│   ├── engine.py           # NEW: LiveEngine
-│   ├── orchestrator.py     # NEW: LiveExecutionOrchestrator
+│   ├── orchestrator.py     # NEW: LiveExecutionOrchestrator (main orchestrator)
 │   ├── trading_node.py    # NEW: TradingNode wrapper
 │   ├── oms.py             # NEW: UnifiedOrderManager
 │   ├── positions.py       # NEW: UnifiedPositionTracker
@@ -615,8 +613,8 @@ class BacktestEngine:
     def run(self):
         # Backtest logic only
 
-# backend/live/engine.py
-class LiveEngine:
+# backend/live/orchestrator.py
+class LiveExecutionOrchestrator:
     def run(self):
         # Live logic only
 ```

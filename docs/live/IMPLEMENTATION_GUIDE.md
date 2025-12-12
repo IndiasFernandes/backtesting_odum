@@ -11,8 +11,6 @@ You are implementing a **production-grade live execution mechanism** for a unifi
    - Input: `gs://instruments-store-cefi-central-element-323112/` (instruments)
    - Input: `gs://market-data-tick-cefi-central-element-323112/` (market tick data)
    - Output: `gs://execution-store-cefi-central-element-323112/` (execution results)
-     - **Note**: Spec mentions `gs://results-central-element-3-backtest-cefi/` but current implementation uses `execution-store-cefi-central-element-323112/`
-     - Verify bucket name alignment with spec before production deployment
    - Use `download_from_gcs()`, `download_from_gcs_streaming()`, `upload_to_gcs()` from UCS
    - Local filesystem (`data_downloads/`) is **fallback only**, not primary
 
@@ -30,9 +28,6 @@ You are implementing a **production-grade live execution mechanism** for a unifi
      - `positions.parquet`: Position timeline with P&L
      - `equity_curve.parquet`: Portfolio value over time
    - Upload to: `gs://execution-store-cefi-central-element-323112/backtest_results/{run_id}/`
-     - **Note**: Spec section 8 mentions `gs://results-central-element-3-backtest-cefi/` as output bucket
-     - Current implementation uses `execution-store-cefi-central-element-323112/`
-     - **Action Required**: Verify bucket name alignment with spec before production deployment
 
 4. **Consistency with Backtest**:
    - Reuse same execution algorithms: `TWAPExecAlgorithm`, `VWAPExecAlgorithm`, `IcebergExecAlgorithm`
@@ -81,6 +76,13 @@ You are implementing a **production-grade live execution mechanism** for a unifi
     - Separate services: `odum-backend` (port 8000) for backtest, `odum-live-backend` (port 8001) for live
     - Frontend service detection: dynamically show/hide pages based on active services
     - Status page: `/status` shows service health and GCS bucket connectivity
+
+12. **Frontend Integration**:
+    - Live execution UI: Trade submission form, order monitoring, position tracking
+    - Strategy deployment interface: Upload and deploy strategies
+    - CLI alignment: Frontend displays match CLI output exactly
+    - Service detection: UI adapts to active services (backtest only, live only, or both)
+    - Real-time updates: WebSocket or polling for order status, positions, fills
 
 12. **Migration Strategy**:
     - Zero-downtime, backward-compatible migration

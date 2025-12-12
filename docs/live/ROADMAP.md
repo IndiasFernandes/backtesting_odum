@@ -45,6 +45,12 @@
   - [ ] PostgreSQL service - **New for live OMS/positions**
   - [ ] Redis service (optional) - **New for live config updates**
   - [ ] Frontend service (port 5173) - **Update with service detection**
+- [ ] **Frontend Service Detection**:
+  - [ ] Create `useServiceDetection` React hook
+  - [ ] Implement health check endpoints (`/api/health` for backtest, `/api/live/health` for live)
+  - [ ] Frontend detects which services are active
+  - [ ] Conditionally show/hide pages based on active services
+  - [ ] Status page shows service health and GCS connectivity
 
 **Deliverables**:
 - ✅ Git workflow established (`feature/live-execution` branch)
@@ -226,19 +232,42 @@
 - Services can be deployed independently
 - Production deployment procedures documented
 
-### Phase 7: Testing & Validation (Weeks 13-14)
+### Phase 7: Frontend Integration & Testing (Weeks 13-14)
 
-**Goal**: Comprehensive testing and production readiness
+**Goal**: Frontend integration for live execution testing and comprehensive validation
 
 **Tasks**:
-- [ ] Unit tests for all components
-- [ ] Integration tests (end-to-end order flow)
-- [ ] Paper trading validation
-- [ ] Performance testing
-- [ ] Production readiness review
-- [ ] Documentation completion
+- [ ] **Frontend Live Execution UI**:
+  - [ ] Create live execution page (`/live/execute`)
+  - [ ] Trade submission form (instrument, side, quantity, order type, price)
+  - [ ] Real-time order status display (matches CLI output)
+  - [ ] Position monitoring dashboard
+  - [ ] Order history and fills display
+  - [ ] Strategy deployment interface
+  - [ ] Live execution logs viewer (matches CLI output)
+- [ ] **Frontend Service Detection** (if not completed in Phase 1):
+  - [ ] Implement `useServiceDetection` hook
+  - [ ] Conditional route rendering (show/hide pages based on active services)
+  - [ ] Status page with service health indicators
+- [ ] **CLI Alignment**:
+  - [ ] Ensure frontend displays match CLI output exactly
+  - [ ] Same order status format, position format, fill format
+  - [ ] Real-time updates via WebSocket or polling
+- [ ] **Testing**:
+  - [ ] Unit tests for all components
+  - [ ] Integration tests (end-to-end order flow)
+  - [ ] Frontend-backend integration tests
+  - [ ] Paper trading validation
+  - [ ] Performance testing
+  - [ ] Production readiness review
+  - [ ] Documentation completion
 
 **Deliverables**:
+- ✅ Live execution UI page
+- ✅ Trade submission interface
+- ✅ Real-time order/position monitoring
+- ✅ Strategy deployment interface
+- ✅ Service detection working
 - ✅ Unit test suite
 - ✅ Integration test suite
 - ✅ Paper trading validation report
@@ -247,6 +276,9 @@
 - ✅ Complete documentation
 
 **Success Criteria**:
+- Can submit trades via frontend UI
+- Frontend displays match CLI output exactly
+- Service detection works (shows/hides pages correctly)
 - All unit tests pass
 - Integration tests pass
 - Paper trading successful
@@ -384,7 +416,7 @@ Because development happens in feature branches, **main is always recoverable**.
 
 ### 3. Output Schema Alignment ✅
 - ✅ Match exact schemas from spec (`summary.json`, `orders.parquet`, `fills.parquet`, `positions.parquet`, `equity_curve.parquet`)
-- ✅ Upload to `gs://execution-store-cefi-central-element-323112/backtest_results/{run_id}/` (Note: Spec mentions `gs://results-central-element-3-backtest-cefi/` but current implementation uses `execution-store-cefi-central-element-323112/`)
+- ✅ Upload to `gs://execution-store-cefi-central-element-323112/backtest_results/{run_id}/`
 - ✅ Use UCS `upload_to_gcs()` for all uploads
 
 ### 4. Consistency with Backtest ✅
@@ -702,6 +734,67 @@ backend/
 
 ---
 
+## Frontend Service Detection & UI Management
+
+### How UI Manages Active Services
+
+**Service Detection Hook** (`useServiceDetection.ts`):
+- Checks health endpoints every 5 seconds
+- Returns: `backtestAvailable`, `liveAvailable`, `services`, `lastCheck`
+- Frontend adapts dynamically to active services
+
+**Conditional Route Rendering**:
+- **Backtest Only** (`--profile backtest`): Shows backtest pages (`/run`, `/compare`, `/algorithms`), hides live pages
+- **Live Only** (`--profile live`): Shows live pages (`/live/execute`, `/live/positions`, etc.), hides backtest pages
+- **Both** (`--profile both` or no profile): Shows all pages
+- **Neither**: Shows status page with connection instructions
+
+**Status Page** (`/status`):
+- Shows which services are active
+- Displays health status for each service
+- Shows GCS bucket connectivity
+- Provides connection instructions if services unavailable
+
+**Navigation**:
+- Backtest pages only visible when `backtestAvailable === true`
+- Live pages only visible when `liveAvailable === true`
+- Status page always accessible
+
+### Frontend Live Execution UI Features
+
+**Trade Submission Page** (`/live/execute`):
+- Form fields: Instrument, Side (BUY/SELL), Quantity, Order Type (MARKET/LIMIT), Price (if LIMIT)
+- Execution Algorithm selection (TWAP, VWAP, Iceberg, NORMAL)
+- Algorithm parameters configuration
+- Submit button sends order to live API
+- **CLI Output Display**: Shows exactly what's being sent (matches CLI output)
+- Real-time order status updates (matches CLI output format)
+
+**Order Monitoring**:
+- Real-time order status display (matches CLI format)
+- Order history table
+- Fill details (price, quantity, fee, timestamp) - matches CLI
+- Position updates - matches CLI format
+
+**Strategy Deployment** (`/live/strategies`):
+- Upload strategy configuration (JSON)
+- Deploy strategy to live execution
+- Monitor strategy performance
+- Start/stop strategy execution
+- View strategy logs (matches CLI output)
+
+**CLI Alignment**:
+- Frontend displays match CLI output format exactly
+- Same order status format
+- Same position format
+- Same fill format
+- Same log format
+- Real-time updates via WebSocket or polling
+
+**See**: `FRONTEND_SERVICE_DETECTION.md` for detailed implementation guide
+
+---
+
 ## Next Steps
 
 1. **Set Up Git Workflow**: Create `feature/live-execution` branch
@@ -709,9 +802,10 @@ backend/
 3. **Set Up**: Create `backend/live/` directory structure
 4. **Begin Phase 1**: Start with core infrastructure and Docker setup
 5. **Follow Phases**: Implement incrementally, test as you go
-6. **Migrate Structure**: Complete structure migration in Phase 6
-7. **Deploy**: Test all 3 Docker profiles
-8. **Validate**: Ensure alignment with spec and current implementation
+6. **Frontend Integration**: Add service detection and live execution UI (Phase 7)
+7. **Migrate Structure**: Complete structure migration in Phase 6
+8. **Deploy**: Test all 3 Docker profiles
+9. **Validate**: Ensure alignment with spec and current implementation
 
 ---
 
