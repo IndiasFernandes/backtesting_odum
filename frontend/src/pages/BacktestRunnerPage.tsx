@@ -45,24 +45,29 @@ export default function BacktestRunnerPage() {
   const [dataValidation, setDataValidation] = useState<DataCheckResult | null>(null)
   const [isCheckingData, setIsCheckingData] = useState(false)
 
-  // Fetch venues
+  // Fetch venues (parallel with other initial data)
   const { data: venuesData } = useQuery({
     queryKey: ['venues'],
     queryFn: () => backtestApi.getVenues(),
+    staleTime: 5 * 60 * 1000, // Cache for 5 minutes
   })
 
   // Fetch instrument types for selected venue (only for CeFi)
+  // This can run in parallel with venues since it doesn't depend on it
   const { data: instrumentTypesData } = useQuery({
     queryKey: ['instrumentTypes', selectedVenue],
     queryFn: () => backtestApi.getInstrumentTypes(selectedVenue),
     enabled: !!selectedVenue && venueCategory === 'cefi',
+    staleTime: 5 * 60 * 1000, // Cache for 5 minutes
   })
 
   // Fetch instruments for selected venue and product type (only for CeFi)
+  // This runs after venue and product type are selected
   const { data: instrumentsData } = useQuery({
     queryKey: ['instruments', selectedVenue, selectedProductType],
     queryFn: () => backtestApi.getInstruments(selectedVenue, selectedProductType),
     enabled: !!selectedVenue && !!selectedProductType && venueCategory === 'cefi',
+    staleTime: 2 * 60 * 1000, // Cache for 2 minutes (instruments may change more frequently)
   })
 
   // Update formData when instrument selection changes

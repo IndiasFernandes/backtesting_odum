@@ -4,10 +4,15 @@ import inspect
 import importlib.util
 from pathlib import Path
 from typing import List, Dict, Any, Optional
+from functools import lru_cache
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/api/algorithms", tags=["algorithms"])
+
+# Cache for algorithm list (cleared when file changes)
+_algorithm_cache: Optional[List[Dict[str, Any]]] = None
+_algorithms_file_mtime: Optional[float] = None
 
 # Path to execution algorithms file (updated after reorganization)
 # New location: backend/execution/algorithms.py
@@ -118,11 +123,19 @@ def _parse_algorithm_info(code: str, class_name: str) -> Dict[str, Any]:
 
 @router.get("/", response_model=List[AlgorithmInfo])
 async def list_algorithms():
-    """List all available execution algorithms."""
+    """List all available execution algorithms (cached for performance)."""
+    global _algorithm_cache, _algorithms_file_mtime
+    
     try:
         algorithms_file = _get_algorithms_file()
-        code = algorithms_file.read_text()
+        current_mtime = algorithms_file.stat().st_mtime
         
+        # Return cached result if file hasn't changed
+        if _algorithm_cache is not None and _algorithms_file_mtime == current_mtime:
+            return _algorithm_cache
+        
+        # Parse algorithms
+        code = algorithms_file.read_text()
         algorithms = []
         
         # Known algorithms
@@ -147,6 +160,10 @@ async def list_algorithms():
                     description=info.get("description", default_desc),
                     parameters=info.get("parameters", {}),
                 ))
+        
+        # Cache the result
+        _algorithm_cache = algorithms
+        _algorithms_file_mtime = current_mtime
         
         return algorithms
     except Exception as e:
