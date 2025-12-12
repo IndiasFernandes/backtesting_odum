@@ -113,20 +113,21 @@
 **Goal**: Integrate NautilusTrader TradingNode for Binance, Bybit, OKX (CeFi)
 
 **Tasks**:
-- [ ] Create `LiveTradingNode` wrapper class (`backend/live/trading_node.py`)
-- [ ] Implement `TradingNodeConfig` builder from JSON
-- [ ] Register Binance, Bybit, OKX client factories
-- [ ] Subscribe to order events (`OrderSubmitted`, `OrderFilled`, `OrderCancelled`)
-- [ ] Implement position sync from NautilusTrader Portfolio
+- [x] Create `LiveTradingNode` wrapper class (`backend/live/trading_node.py`)
+- [x] Implement `TradingNodeConfig` builder from JSON (`backend/live/config/trading_node_config.py`)
+- [x] Register Binance, Bybit, OKX client factories
+- [x] Subscribe to order events (`OrderSubmitted`, `OrderFilled`, `OrderCancelled`) - framework ready
+- [x] Implement position sync from NautilusTrader Portfolio - framework ready
 - [ ] Test with paper trading accounts
 - [ ] **Prepare for TradFi**: Design adapter interface to support future TradFi venues (IB, etc.)
 
 **Deliverables**:
-- ✅ `LiveTradingNode` wrapper class
-- ✅ TradingNode configuration from JSON
-- ✅ Event subscriptions working
-- ✅ Position sync from NautilusTrader
-- ✅ Adapter interface designed for TradFi/DeFi/Sports
+- ✅ `LiveTradingNode` wrapper class (`backend/live/trading_node.py`)
+- ✅ TradingNode configuration from JSON (`backend/live/config/trading_node_config.py`)
+- ✅ Client factory registration (Binance, Bybit, OKX)
+- ✅ Event subscription framework (ready for Unified OMS integration)
+- ✅ Position sync framework (ready for Unified Position Tracker integration)
+- ✅ Adapter interface designed for TradFi/DeFi/Sports (via unified schema)
 
 **Success Criteria**:
 - TradingNode connects to Binance/Bybit/OKX
