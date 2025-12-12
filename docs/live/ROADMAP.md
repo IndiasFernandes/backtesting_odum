@@ -28,7 +28,13 @@
   - [ ] Configure GitHub branch protection for `main`
   - [ ] Set up PR requirements
 - [ ] Create module structure: `backend/live/` (see `FILE_ORGANIZATION.md`)
-- [ ] Set up PostgreSQL schema (`unified_orders`, `unified_positions`)
+- [ ] **Set up PostgreSQL database layer**:
+  - [ ] Install dependencies: `sqlalchemy>=2.0`, `asyncpg>=0.29`, `alembic>=1.13`
+  - [ ] Create SQLAlchemy models (`backend/live/models.py`) for `unified_orders`, `unified_positions`
+  - [ ] Set up Alembic migrations (`backend/live/alembic/`)
+  - [ ] Create asyncpg connection pool manager (`backend/live/database.py`)
+  - [ ] Use SQLAlchemy for schema definition and migrations
+  - [ ] Use asyncpg directly for execution-critical queries (raw SQL for performance)
 - [ ] Create configuration framework (external JSON, similar to backtest)
 - [ ] Set up UCS integration (verify GCS bucket access)
 - [ ] Create `backend/api/live_server.py` skeleton
@@ -58,7 +64,10 @@
 
 **Success Criteria**:
 - `feature/live-execution` branch created and protected
-- Can connect to PostgreSQL
+- SQLAlchemy models defined for `unified_orders` and `unified_positions`
+- Alembic migrations can create/update database schema
+- asyncpg connection pool initialized and working
+- Can execute raw SQL queries via asyncpg for performance-critical operations
 - Can load configuration from JSON
 - Can access GCS buckets via UCS
 - Basic API server responds on port 8001
@@ -140,10 +149,14 @@
 **Tasks**:
 - [ ] Implement `UnifiedOrderManager` (`backend/live/oms.py`)
   - Create, update, query orders
-  - PostgreSQL persistence
+  - Use asyncpg for execution-critical operations (raw SQL)
+  - Use SQLAlchemy models for schema validation
+  - PostgreSQL persistence via asyncpg connection pool
 - [ ] Implement `UnifiedPositionTracker` (`backend/live/positions.py`)
   - Aggregate positions across venues
-  - PostgreSQL persistence
+  - Use asyncpg for execution-critical operations (raw SQL)
+  - Use SQLAlchemy models for schema validation
+  - PostgreSQL persistence via asyncpg connection pool
 - [ ] Implement real-time sync from NautilusTrader
 - [ ] Implement periodic polling for external adapters
 - [ ] Add reconciliation on startup
@@ -706,47 +719,64 @@ gRPC provides lower latency (~2-5ms vs ~10-20ms) and smaller payloads, but requi
 
 ### 2. Database ✅
 
-**Decision**: **PostgreSQL** (local development, minimal schema, only live execution data)
+**Decision**: **PostgreSQL** with **SQLAlchemy** (schema/migrations) + **asyncpg** (execution-critical operations)
+
+**Implementation Approach**:
+- **SQLAlchemy 2.0+**: Schema definition, model validation, Alembic migrations
+- **asyncpg**: Raw SQL queries for all database operations (performance-critical)
+- **Hybrid Pattern**: SQLAlchemy models define schema, asyncpg executes queries
 
 **Local Development**:
 - PostgreSQL server in Docker (for local development)
 - Minimal schema: only orders and positions
 - **NOT persisted**: Market data, signals, backtest results (handled by GCS via UCS)
 
-**Schema** (Local Development):
-```sql
--- Minimal schema for live execution
-CREATE TABLE unified_orders (
-    order_id VARCHAR PRIMARY KEY,
-    operation_id VARCHAR,
-    instrument_key VARCHAR,
-    side VARCHAR,
-    quantity DECIMAL,
-    status VARCHAR,
-    created_at TIMESTAMP,
-    updated_at TIMESTAMP,
-    venue VARCHAR,
-    fills JSONB  -- Store fill details as JSONB
-);
-
-CREATE TABLE unified_positions (
-    id SERIAL PRIMARY KEY,
-    instrument_key VARCHAR,
-    quantity DECIMAL,
-    timestamp TIMESTAMP,
-    venue VARCHAR
-);
-
--- Indexes for fast queries
-CREATE INDEX idx_orders_status ON unified_orders(status);
-CREATE INDEX idx_orders_instrument ON unified_orders(instrument_key);
-CREATE INDEX idx_positions_instrument ON unified_positions(instrument_key);
+**Dependencies**:
+```txt
+sqlalchemy>=2.0.0
+asyncpg>=0.29.0
+alembic>=1.13.0
 ```
 
-**Why Minimal**:
+**Database Connection** (`backend/live/database.py`):
+```python
+import asyncpg
+from sqlalchemy.ext.asyncio import create_async_engine
+
+# SQLAlchemy engine for Alembic migrations
+engine = create_async_engine("postgresql+asyncpg://user:pass@postgres:5432/execution_db")
+
+# asyncpg pool for execution-critical operations
+pool = await asyncpg.create_pool(
+    database='execution_db',
+    user='user',
+    password='pass',
+    host='postgres',
+    min_size=10,
+    max_size=20,
+    max_queries=50000,
+    max_inactive_connection_lifetime=300.0,
+    command_timeout=60
+)
+```
+
+**Schema Definition** (SQLAlchemy Models):
+- `backend/live/models.py` - SQLAlchemy declarative models
+- Alembic migrations in `backend/live/alembic/`
+- Models used for schema validation and migrations only
+
+**Query Execution** (asyncpg):
+- All database operations use asyncpg directly (raw SQL)
+- Connection pool managed via asyncpg
+- Prepared statements for frequently executed queries
+- Transactions via `async with conn.transaction()`
+
+**Why This Approach**:
+- **SQLAlchemy**: Industry-standard schema management, Alembic migrations, type safety
+- **asyncpg**: Fastest PostgreSQL driver for Python, optimized for async operations
+- **Hybrid**: Best of both worlds - schema management + performance
 - Only persist what's needed for live execution (orders, positions)
 - Market data, signals, results → GCS via UCS (not database)
-- Reduces database load and complexity
 
 **Note**: Production deployment (including database setup) is handled by deployment team, not included in this documentation.
 

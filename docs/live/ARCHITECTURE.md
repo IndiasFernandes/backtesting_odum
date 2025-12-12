@@ -387,23 +387,52 @@ class AdapterRegistry:
 - PostgreSQL persistence for order recovery
 - Query by operation_id, strategy, venue, instrument
 
-**Database Schema:**
-```sql
-CREATE TABLE unified_orders (
-    operation_id VARCHAR(255) PRIMARY KEY,
-    canonical_id VARCHAR(255) NOT NULL,
-    venue VARCHAR(100) NOT NULL,
-    venue_type VARCHAR(20) NOT NULL,  -- 'NAUTILUS' or 'EXTERNAL_SDK'
-    venue_order_id VARCHAR(255),
-    status VARCHAR(50) NOT NULL,
-    side VARCHAR(10) NOT NULL,
-    quantity DECIMAL(36, 18) NOT NULL,
-    price DECIMAL(36, 18),
-    fills JSONB,
-    strategy_id VARCHAR(255),
-    created_at TIMESTAMP NOT NULL,
-    updated_at TIMESTAMP NOT NULL
-);
+**Database Schema** (SQLAlchemy Models + asyncpg Execution):
+
+**SQLAlchemy Model** (`backend/live/models.py`):
+```python
+from sqlalchemy import Column, String, Numeric, DateTime, JSON
+from sqlalchemy.ext.declarative import declarative_base
+
+Base = declarative_base()
+
+class UnifiedOrder(Base):
+    __tablename__ = 'unified_orders'
+    
+    operation_id = Column(String(255), primary_key=True)
+    canonical_id = Column(String(255), nullable=False)
+    venue = Column(String(100), nullable=False)
+    venue_type = Column(String(20), nullable=False)  # 'NAUTILUS' or 'EXTERNAL_SDK'
+    venue_order_id = Column(String(255))
+    status = Column(String(50), nullable=False)
+    side = Column(String(10), nullable=False)
+    quantity = Column(Numeric(36, 18), nullable=False)
+    price = Column(Numeric(36, 18))
+    fills = Column(JSON)  # JSONB in PostgreSQL
+    strategy_id = Column(String(255))
+    created_at = Column(DateTime, nullable=False)
+    updated_at = Column(DateTime, nullable=False)
+```
+
+**asyncpg Execution** (`backend/live/oms.py`):
+```python
+import asyncpg
+from backend.live.database import get_pool
+
+async def create_order(order_data: dict):
+    """Create order using asyncpg for performance."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO unified_orders 
+            (operation_id, canonical_id, venue, venue_type, status, side, quantity, price, fills, strategy_id, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+            """,
+            order_data['operation_id'],
+            order_data['canonical_id'],
+            # ... other fields
+        )
 ```
 
 **NautilusTrader Sync:**
@@ -436,20 +465,49 @@ CREATE TABLE unified_orders (
 - Position deltas from fill events
 - PostgreSQL persistence
 
-**Database Schema:**
-```sql
-CREATE TABLE unified_positions (
-    canonical_id VARCHAR(255) PRIMARY KEY,
-    base_asset VARCHAR(10) NOT NULL,
-    aggregated_quantity DECIMAL(36, 18) NOT NULL,
-    venue_positions JSONB NOT NULL,  -- {venue: quantity}
-    venue_types JSONB NOT NULL,  -- {venue: 'NAUTILUS' | 'EXTERNAL_SDK'}
-    average_entry_price DECIMAL(36, 18),
-    current_price DECIMAL(36, 18),
-    unrealized_pnl DECIMAL(36, 18),
-    realized_pnl DECIMAL(36, 18),
-    updated_at TIMESTAMP NOT NULL
-);
+**Database Schema** (SQLAlchemy Models + asyncpg Execution):
+
+**SQLAlchemy Model** (`backend/live/models.py`):
+```python
+class UnifiedPosition(Base):
+    __tablename__ = 'unified_positions'
+    
+    canonical_id = Column(String(255), primary_key=True)
+    base_asset = Column(String(10), nullable=False)
+    aggregated_quantity = Column(Numeric(36, 18), nullable=False)
+    venue_positions = Column(JSON, nullable=False)  # JSONB in PostgreSQL: {venue: quantity}
+    venue_types = Column(JSON, nullable=False)  # JSONB: {venue: 'NAUTILUS' | 'EXTERNAL_SDK'}
+    average_entry_price = Column(Numeric(36, 18))
+    current_price = Column(Numeric(36, 18))
+    unrealized_pnl = Column(Numeric(36, 18))
+    realized_pnl = Column(Numeric(36, 18))
+    updated_at = Column(DateTime, nullable=False)
+```
+
+**asyncpg Execution** (`backend/live/positions.py`):
+```python
+import asyncpg
+from backend.live.database import get_pool
+
+async def update_position(canonical_id: str, position_data: dict):
+    """Update position using asyncpg for performance."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO unified_positions 
+            (canonical_id, base_asset, aggregated_quantity, venue_positions, venue_types, updated_at)
+            VALUES ($1, $2, $3, $4, $5, NOW())
+            ON CONFLICT (canonical_id) 
+            DO UPDATE SET 
+                aggregated_quantity = EXCLUDED.aggregated_quantity,
+                venue_positions = EXCLUDED.venue_positions,
+                updated_at = NOW()
+            """,
+            canonical_id,
+            position_data['base_asset'],
+            # ... other fields
+        )
 ```
 
 **Refresh Strategy:**
@@ -597,9 +655,18 @@ def route_order(order: UnifiedOrder) -> VenueRoute:
    See `docs/live/FILE_ORGANIZATION.md` for complete file organization strategy.
 
 2. **Database Schema Setup**
-   - Create PostgreSQL tables (`unified_orders`, `unified_positions`)
-   - Alembic migrations
-   - Connection pooling
+   - **SQLAlchemy** for schema definition and migrations:
+     - Create SQLAlchemy models (`backend/live/models.py`)
+     - Set up Alembic migrations (`backend/live/alembic/`)
+     - Define database schema declaratively
+   - **asyncpg** for execution-critical operations:
+     - Create asyncpg connection pool manager (`backend/live/database.py`)
+     - Use raw SQL queries via asyncpg for performance-critical paths
+     - Connection pooling with asyncpg (`min_size=10`, `max_size=20`)
+   - **Hybrid Approach**:
+     - SQLAlchemy models for schema definition and validation
+     - asyncpg for all database operations (faster than SQLAlchemy ORM)
+     - Alembic for schema migrations
 
 3. **Configuration Framework**
    - Live trading config schema (similar to backtest config)
