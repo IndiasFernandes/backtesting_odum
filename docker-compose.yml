@@ -2,8 +2,7 @@
 
 services:
   backend:
-    # No profiles - runs by default for backward compatibility
-    # Can be excluded with: docker-compose --profile live up -d (live only)
+    profiles: ["backtest", "both"]  # Backtest profile - current system runs here
     build:
       context: .
       dockerfile: backend/Dockerfile
@@ -61,7 +60,7 @@ services:
     #       cpus: '1.0'
 
   frontend:
-    # No profiles - runs by default for backward compatibility
+    profiles: ["backtest", "live", "both"]  # Frontend works with all profiles
     build:
       context: .
       dockerfile: frontend/Dockerfile
